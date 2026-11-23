@@ -26,7 +26,7 @@ const ICONS = {
 };
 const NAV_DESK = [["home", "Сегодня"], ["tasks", "Задачи"], ["sasha", "Саша"], ["money", "Деньги"], ["health", "Здоровье"], ["balance", "Баланс"], ["lists", "Списки"], ["more", "Ещё"]];
 const NAV_MOB = [["home", "Сегодня"], ["tasks", "Задачи"], ["sasha", "Саша"], ["money", "Деньги"], ["more", "Ещё"]];
-const SUBPAGES = ["health", "balance", "lists", "cards", "docs"];
+const SUBPAGES = ["health", "balance", "lists", "docs", "bdays"];
 
 /* ---------- утилиты ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -102,10 +102,11 @@ function extrasOn(ds) {
   } });
   if (f === "all" || f === "we") listItemsOn(ds).forEach(({ l, i }) => out.push({ kind: "list", id: l.id, title: i.t, short: i.t, paid: i.done }));
   docs().forEach((d) => { if (d.data.expires === ds) out.push({ kind: "doc", id: d.id, title: `Истекает: ${d.data.title}`, short: `Срок: ${d.data.title}` }); });
+  bdaysOn(ds).forEach((b) => { const age = bdayAge(b, ds); out.push({ kind: "bday", id: b.id, title: `ДР: ${b.name}${age ? ` (${age})` : ""}`, short: `ДР: ${b.name}` }); });
   return out;
 }
-const extraAttr = (x) => (x.kind === "pay" ? `data-pay-open="${x.id}"` : x.kind === "doc" ? `data-open-doc="${x.id}"` : `data-open-list="${x.id}"`);
-const extraBtn = (x) => `<button class="ev extra ${x.kind}${x.paid ? " paid" : ""}${x.over ? " warn" : ""}" ${extraAttr(x)}><span class="tx"><span>${x.kind === "pay" ? (x.paid ? "оплачено" : "платёж") : x.kind === "doc" ? "документ" : "из списка"}</span><b>${esc(x.title)}</b></span></button>`;
+const extraAttr = (x) => (x.kind === "pay" ? `data-pay-open="${x.id}"` : x.kind === "doc" ? `data-open-doc="${x.id}"` : x.kind === "bday" ? `data-bday-open="${x.id}"` : `data-open-list="${x.id}"`);
+const extraBtn = (x) => `<button class="ev extra ${x.kind}${x.paid ? " paid" : ""}${x.over ? " warn" : ""}" ${extraAttr(x)}><span class="tx"><span>${x.kind === "pay" ? (x.paid ? "оплачено" : "платёж") : x.kind === "doc" ? "документ" : x.kind === "bday" ? "день рождения" : "из списка"}</span><b>${esc(x.title)}</b></span></button>`;
 const showCycle = () => S.cycleLayer && cycleItem();
 const needsPick = (o) => o.who === "sasha" && !o.routine && !o.pick && !o.no_pick && !o.all_day;
 
@@ -196,7 +197,7 @@ function renderNoProfile() {
 /* ---------- каркас ---------- */
 function render() {
   const reqs = requestsToMe().length;
-  const isOn = (k, mob) => S.tab === k || (mob && k === "more" && SUBPAGES.includes(S.tab)) || (!mob && k === "more" && ["cards", "docs"].includes(S.tab));
+  const isOn = (k, mob) => S.tab === k || (mob && k === "more" && SUBPAGES.includes(S.tab)) || (!mob && k === "more" && ["docs", "bdays"].includes(S.tab));
   const navBtn = (k, n, cls) => `<button class="${cls || ""}${isOn(k, cls === "tb") ? " on" : ""}" data-tab="${k}">${cls === "tb" ? ICONS[k] : ""}<span>${n}</span>${k === "tasks" && reqs ? `<i class="badge">${reqs}</i>` : ""}</button>`;
   $("#app").innerHTML = `${DB.demo ? `<div class="demo-bar">Демо-режим: данные только в этом браузере · вы вошли как ${pn(S.me.person)}</div>` : ""}
     <div class="shell">
@@ -214,14 +215,14 @@ function render() {
     S.fab = false; render();
     const k = b.dataset.new, ds = iso(S.sel);
     ({
-      task: () => openTask(null, { due: ds }), sasha: () => openEvent(null, null, { who: "sasha", cat: "sasha", date: ds }), event: () => openEvent(null, null, { date: ds }),
+      task: () => openTask(null, { due: ds }), ctask: () => openTask(null, { cat: "care", care: true, due: "" }), sasha: () => openEvent(null, null, { who: "sasha", cat: "sasha", date: ds }), event: () => openEvent(null, null, { date: ds }),
       expense: () => openMoney(null, { kind: "expense" }), income: () => openMoney(null, { kind: "income" }), payment: () => openPayment(null),
       pill: () => openPill(null), witem: () => openWheelItem(null, { owner: S.wwho && S.wwho !== "both" ? S.wwho : S.me.person, sphere: S.wsel || "Спорт" }), goal: () => openGoal(null),
-      list: () => openListMeta(null), card: () => openCard(null), doc: () => openDoc(null),
+      list: () => openListMeta(null), card: () => openCard(null), doc: () => openDoc(null), bday: () => openBday(null),
     })[k]();
   }));
   const main = $("#main");
-  ({ home: renderHome, tasks: renderTasks, sasha: renderSasha, more: renderMore, money: renderMoney, health: renderHealth, balance: renderBalance, lists: renderLists, cards: renderCards, docs: renderDocs })[S.tab](main);
+  ({ home: renderHome, tasks: renderTasks, sasha: renderSasha, more: renderMore, money: renderMoney, health: renderHealth, balance: renderBalance, lists: renderLists, cards: renderCards, docs: renderDocs, bdays: renderBdays })[S.tab](main);
   const bk = $("[data-tab-back]", main); if (bk) bk.onclick = () => go("more");
 }
 function go(tab, sub) {
@@ -233,9 +234,9 @@ function go(tab, sub) {
 function fabItems() {
   const base = [["event", "Событие"], ["task", "Задача"], ["sasha", "Занятие Саши"], ["payment", "Платёж"]];
   return ({
-    money: [["payment", "Платёж"]],
+    money: [["payment", "Платёж"]], tasks: [["ctask", "Задача (забота)"]],
     health: [["pill", "Таблетка или витамин"]], balance: [["witem", "Дело в колесо"], ["goal", "Цель"]],
-    lists: [["list", "Список"]], cards: [["card", "Карта"]], docs: [["doc", "Документ"]],
+    lists: [["list", "Список"]], docs: [["doc", "Документ"]], bdays: [["bday", "День рождения"]],
   })[S.tab] || base;
 }
 const mobBack = () => '<button class="pill-btn mob-back" data-tab-back>‹ Ещё</button>';
@@ -346,7 +347,7 @@ function monthHTML() {
   for (let i = 0; i < cells; i++) {
     const d = addD(start, i);
     if (i % 7 === 0) h += spansRow(Array.from({ length: 7 }, (_, k) => iso(addD(start, i + k))), "mo-spans");
-    const ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : "var(--we)", warn: x.over, paid: x.paid }))];
+    const ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : x.kind === "bday" ? "var(--sasha)" : "var(--we)", warn: x.over, paid: x.paid }))];
     const cph = showCycle() ? cyclePhase(ds) : null;
     h += `<div class="mo-c${d.getMonth() !== mo ? " out" : ""}${ds === t ? " today" : ""}${ds === sel ? " sel" : ""}" data-day="${ds}" role="button" tabindex="0" aria-label="${fmtLong(ds)}">
       <span class="n"><b>${d.getDate()}</b>${cph ? `<i class="cdot ${cph}" title="${PHASE_N[cph]}"></i>` : ""}</span>${evs.some((o) => o.routine) ? '<div class="bandline"></div>' : ""}
@@ -421,11 +422,13 @@ function todayHTML() {
   const payAl = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.paid && x.st.soon && x.st.left > 0 && !x.p.data.urgent);
   const urgent = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => x.p.data.urgent && !x.st.paid && !x.st.ended);
   const docAl = docExpiring(30);
+  const bdAl = bdayAlerts();
   const pct = ts.length ? Math.round((done / ts.length) * 100) : 0;
   return `<div class="today-h"><span class="d">${fmtLong(ds)}</span>${(() => { const sp = spansIn([ds]); return sp.length ? `<span class="today-spans">${sp.map((o) => `<button class="span" style="--c:${PEOPLE[o.item.data.who]?.c || catC(o.item.data.cat)}" data-ev="${o.item.id}" data-ds="${ds}"><b>${esc(o.item.data.title)}</b><small>${spanDates(o)}</small></button>`).join("")}</span>` : ""; })()}<h2>${isT ? "Сегодня" : WDN[wd(S.sel)]}</h2>
       <span class="st">задач ${ts.length} · сделано ${done} · осталось ${ts.length - done}</span>
       <span class="today-add"><button class="btn sm" data-addev="${ds}">+ Событие</button><button class="btn sm" data-addtask="${ds}">+ Задача</button></span>${isT ? "" : '<button class="back" data-nav-today>← вернуться к сегодня</button>'}</div>
-    ${al.length || reqs.length || payAl.length || docAl.length || urgent.length ? `<div class="alerts">
+    ${al.length || reqs.length || payAl.length || docAl.length || urgent.length || bdAl.length ? `<div class="alerts">
+      ${bdAl.map((x) => `<div class="alert bd"><span>${bdayText(x)}${x.b.note ? ` · ${esc(x.b.note)}` : ""}</span><button data-bday-open="${x.b.id}">Открыть</button></div>`).join("")}
       ${urgent.map(({ p, st }) => `<div class="alert"><span><b>Срочно оплатить:</b> ${esc(p.data.title)} · ${payAmt(p)} · ${st.left < 0 ? "просрочено" : st.left === 0 ? "сегодня" : "до " + fmtDate(st.ds)}${p.data.note ? " · " + esc(p.data.note) : ""}</span><button data-pay="${p.id}">Оплатить</button></div>`).join("")}
       ${payAl.map(({ p, st }) => `<div class="alert info"><span>Скоро платёж: ${esc(p.data.title)} ${rub(p.data.amount)}, ${dueLabel(st)}</span><button data-pay="${p.id}">Оплатить</button></div>`).join("")}
       ${docAl.map((d) => `<div class="alert info"><span>${esc(d.data.title)}: ${d.data.expires < tds ? "срок истёк " + fmtDate(d.data.expires) : "действует до " + fmtDate(d.data.expires)}</span><button data-open-doc="${d.id}">Открыть</button></div>`).join("")}
@@ -453,7 +456,7 @@ function bindToday(root) {
   $$("[data-go]", root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); go(b.dataset.go, b.dataset.sub); }));
   $$("[data-open-doc]", root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openDoc(b.dataset.openDoc); }));
   $$("[data-open-list]", root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); S.tab = "lists"; S.listOpen = b.dataset.openList; S.listTab = "all"; render(); window.scrollTo(0, 0); }));
-  bindMoney(root); bindHealth(root); bindBalance(root);
+  bindMoney(root); bindHealth(root); bindBalance(root); bindBdays(root);
 }
 
 /* ---------- действия с задачами ---------- */
@@ -505,43 +508,65 @@ function taskMeta(t) {
   if (t.vis === "private") parts.push("только мне");
   return parts.join(" · ");
 }
+// Вкладка «Задачи» — только «Забота»: дела, которые мы ставим себе, друг другу и просим.
+// Работа, личное и прочее ставится во вкладке «Сегодня».
+function careMeta(t) {
+  const d = t.data, me = S.me.person, t0 = iso(today()), parts = [];
+  const gen = (p) => (p === "zhenya" ? "Жени" : "Любы");
+  if (d.status === "asked") parts.push(d.by === me ? `просьба · ждёт ответа ${gen(d.assignee)}` : `просьба ${gen(d.by)}`);
+  else if (d.status === "discuss") parts.push("надо обсудить");
+  else if (d.status === "declined") parts.push(`${pn(d.assignee)} не успевает`);
+  else if (d.assignee === "we") parts.push("свободная · кто возьмёт");
+  else parts.push(`взято · ${pn(d.taken_by || d.assignee)}`);
+  if (d.kind) parts.push(kindName(d.kind).toLowerCase());
+  const over = d.due && d.due < t0 && d.status !== "done";
+  parts.push(over ? `просрочено · было ${fmtDate(d.due)}` : d.due ? (d.due === t0 ? "сегодня" : `до ${fmtDate(d.due)}`) : "без срока");
+  if (d.first_due && d.first_due < d.due && d.status !== "done") parts.push(`переносится с ${fmtDate(d.first_due)}`);
+  if (d.status === "done" && d.done_by) parts.push(`сделал${d.done_by === "luba" ? "а" : ""} ${pn(d.done_by)}`);
+  return { text: parts.join(" · "), over };
+}
 function renderTasks(main) {
-  const me = S.me.person, pa = partner(), all = tasks();
+  const me = S.me.person, pa = partner(), t0 = iso(today());
+  const care = tasks().filter((t) => t.data.cat === "care");
   const open = (t) => t.data.status !== "done";
   const sets = {
-    mine: all.filter((t) => t.data.assignee === me && open(t) && t.data.status !== "declined"),
-    partner: all.filter((t) => t.data.assignee === pa && open(t)),
-    we: all.filter((t) => t.data.assignee === "we" && open(t)),
-    asks: all.filter((t) => open(t) && t.data.by !== t.data.assignee && t.data.assignee !== "we" && (t.data.assignee === me || t.data.by === me) && ["asked", "discuss", "declined"].includes(t.data.status)),
-    nodate: all.filter((t) => open(t) && !t.data.due && t.data.status !== "declined"),
-    done: all.filter((t) => !open(t)).sort((a, b) => (b.data.done_on || "").localeCompare(a.data.done_on || "")).slice(0, 60),
+    all: care.filter((t) => open(t) && t.data.status !== "declined"),
+    mine: care.filter((t) => open(t) && t.data.assignee === me && t.data.status !== "declined"),
+    partner: care.filter((t) => open(t) && t.data.assignee === pa),
+    free: care.filter((t) => open(t) && t.data.assignee === "we"),
+    asks: care.filter((t) => open(t) && t.data.assignee !== "we" && t.data.by !== t.data.assignee && (t.data.assignee === me || t.data.by === me) && ["asked", "discuss", "declined"].includes(t.data.status)),
+    done: care.filter((t) => !open(t)).sort((a, b) => (b.data.done_on || "").localeCompare(a.data.done_on || "")).slice(0, 60),
   };
-  const tabs = [["mine", "Мои"], ["partner", pa === "zhenya" ? "Женины" : "Любины"], ["we", "Общие"], ["asks", "Просьбы"], ["nodate", "Без срока"], ["done", "Сделано"]];
+  if (!sets[S.ttab]) S.ttab = "all";
+  const tabs = [["all", "Все"], ["mine", "Мои"], ["partner", pn(pa)], ["free", "Свободные"], ["asks", "Просьбы"], ["done", "Сделано"]];
   const list = sets[S.ttab];
-  const t0 = iso(today()), t1 = iso(addD(today(), 1));
-  const groups = S.ttab === "done" ? [["", list]] : [
-    ["Просрочено", list.filter((t) => t.data.due && t.data.due < t0)],
-    ["Сегодня", list.filter((t) => t.data.due === t0)],
-    ["Завтра", list.filter((t) => t.data.due === t1)],
-    ["Позже", list.filter((t) => t.data.due && t.data.due > t1).sort((a, b) => a.data.due.localeCompare(b.data.due))],
-    ["Без срока", list.filter((t) => !t.data.due)],
-  ];
+  const byDue = (a, b) => (a.data.due || "9999").localeCompare(b.data.due || "9999");
+  const toMe = list.filter((t) => t.data.status === "asked" && t.data.assignee === me && t.data.by !== me);
+  const rest = list.filter((t) => !toMe.includes(t)).sort(byDue);
+  const groups = S.ttab === "done" ? [["Сделано", list]] : [["Просят меня", toMe], ["В работе", rest.filter((t) => t.data.due)], ["Без срока", rest.filter((t) => !t.data.due)]];
   const card = (t) => {
-    const d = t.data, over = d.due && d.due < t0 && d.status !== "done";
-    const acts = [];
-    if (d.status === "asked" && d.assignee === me && d.by !== me) acts.push(`<button class="btn primary" data-st="accepted" data-id="${t.id}">Беру</button><button class="btn" data-st="discuss" data-id="${t.id}">Обсудить</button><button class="btn ghost" data-st="declined" data-id="${t.id}">Не успею</button>`);
-    if (d.status === "discuss" && d.assignee === me) acts.push(`<button class="btn primary" data-st="accepted" data-id="${t.id}">Беру</button>`);
-    if (d.status === "declined" && d.by === me) acts.push(`<button class="btn" data-task="${t.id}">Переназначить</button>`);
-    return `<div class="tcard${d.status === "done" ? " done" : ""}" style="--c:${catC(d.cat)}">
-      <button class="ck2${d.status === "done" ? " on" : ""}" data-tdone="${t.id}" aria-label="Выполнено"></button>
-      <button class="body" data-task="${t.id}"><div class="title">${esc(d.title)}</div>
-        <div class="meta">${esc(taskMeta(t))}${d.due ? ` · <span class="${over ? "over" : ""}">${over ? "просрочено, было " : "до "}${fmtDate(d.due)}</span>` : ""}</div></button>
-      ${acts.length ? `<div class="acts">${acts.join("")}</div>` : ""}${starBtn(t)}<i class="dot" style="background:${PEOPLE[d.assignee]?.c}"></i></div>`;
+    const d = t.data, m = careMeta(t), color = PEOPLE[d.assignee]?.c || "var(--muted)";
+    let act = "";
+    if (d.status === "done") act = `<button class="btn" data-tdone="${t.id}">Вернуть</button>`;
+    else if (d.status === "asked" && d.assignee === me && d.by !== me) act = `<span class="acts2"><button class="btn primary" data-st="accepted" data-id="${t.id}">Беру</button><button class="btn" data-st="discuss" data-id="${t.id}">Обсудить</button></span>`;
+    else if (d.assignee === "we") act = `<button class="btn primary" data-take="${t.id}">Взять</button>`;
+    else if (d.status === "declined" && d.by === me) act = `<button class="btn" data-task="${t.id}">Переназначить</button>`;
+    else act = `<button class="btn primary" data-tdone="${t.id}">Выполнить</button>`;
+    return `<div class="ccard${d.status === "done" ? " done" : ""}" style="--c:${color}">
+      <button class="ring${d.status === "done" ? " on" : ""}" data-tdone="${t.id}" aria-label="${d.status === "done" ? "Вернуть в работу" : "Выполнено"}"></button>
+      <button class="body" data-task="${t.id}"><span class="title">${esc(d.title)}</span><span class="meta${m.over ? " over" : ""}">${esc(m.text)}</span></button>
+      ${act}</div>`;
   };
-  main.innerHTML = `<div class="page-h"><h1>Задачи</h1></div>
+  main.innerHTML = `<div class="page-h"><h1>Задачи</h1><span class="spacer"></span><button class="icon-btn big-plus" data-care-new aria-label="Новая задача">+</button></div>
+    <span class="note">Здесь «Забота»: дела себе, ${pa === "zhenya" ? "Жене" : "Любе"} и просьбы друг другу. Просьба приходит уведомлением. Работа и личное — во вкладке «Сегодня».</span>
     <div class="tabs">${tabs.map(([k, n]) => `<button class="${S.ttab === k ? "on" : ""}" data-tt="${k}">${n} · ${sets[k].length}</button>`).join("")}</div>
-    <div class="list">${list.length ? groups.filter((g) => g[1].length).map(([n, l]) => `${n ? `<div class="group-h">${n}</div>` : ""}${l.map(card).join("")}`).join("") : `<div class="empty">Здесь пусто. Нажмите «+», чтобы добавить задачу.</div>`}</div>`;
+    <div class="list">${list.length ? groups.filter((g) => g[1].length).map(([n, l]) => `<div class="group-h">${n}</div>${l.map(card).join("")}`).join("") : '<div class="empty">Здесь пусто. Нажмите «+», чтобы поставить задачу себе, партнёру или попросить о чём-то.</div>'}</div>`;
   $$("[data-tt]", main).forEach((b) => (b.onclick = () => { S.ttab = b.dataset.tt; render(); }));
+  $("[data-care-new]", main).onclick = () => openTask(null, { cat: "care", care: true, due: "" });
+  $$("[data-take]", main).forEach((b) => (b.onclick = async () => {
+    const t = tasks().find((x) => x.id === b.dataset.take); if (!t) return;
+    await saveItem({ ...t, data: { ...t.data, assignee: S.me.person, taken_by: S.me.person, status: "accepted" } }, "Задача ваша");
+  }));
   bindToday(main);
 }
 
@@ -616,7 +641,7 @@ function renderMore(main) {
     ["health", "Здоровье", `${(() => { const n = dosesOn(iso(today()), true).filter((d) => !d.taken).length; return n ? `${n} ${plural(n, "приём", "приёма", "приёмов")} сегодня` : "все таблетки на сегодня приняты"; })()}${c && !c.empty ? " · цикл: " + cs.big.toLowerCase() : ""}`],
     ["balance", "Баланс и цели", (() => { const n = goals().filter((g) => !g.data.done).length; return `${n} ${plural(n, "цель", "цели", "целей")} в работе`; })()],
     ["lists", "Списки и хотелки", `${lists().length} ${plural(lists().length, "список", "списка", "списков")}`],
-    ["cards", "Дисконтные карты", `${cards().length} ${plural(cards().length, "карта", "карты", "карт")}`],
+    ["bdays", "Дни рождения", (() => { const n = bdays().length, a = bdayAlerts(); return n ? `${n} ${plural(n, "человек", "человека", "человек")}${a.length ? ` · ${a[0].left === 0 ? "сегодня" : a[0].left === 1 ? "завтра" : "через " + a[0].left + " дн."}: ${a[0].b.name}` : ""}` : "добавьте родных и друзей"; })()],
     ["docs", "Документы", `${docs().length} ${plural(docs().length, "документ", "документа", "документов")}${exp ? ` · ${exp} скоро ${exp === 1 ? "истекает" : "истекают"}` : ""}`],
   ];
   main.innerHTML = `<div class="page-h"><h1>Ещё</h1></div>
@@ -770,15 +795,15 @@ function openTask(id, preset = {}) {
   F.vis = t ? t.vis : "shared";
   const editable = !t || canEdit(t);
   const draw = () => {
-    const html = `<div class="sheet-h"><button data-close>Отмена</button><b>${t ? "Задача" : "Новая задача"}</b>${editable ? '<button class="go" data-save>Готово</button>' : "<span></span>"}</div>
+    const html = `<div class="sheet-h"><button data-close>Отмена</button><b>${t ? "Задача" : F.care ? "Новая задача · забота" : "Новая задача"}</b>${editable ? '<button class="go" data-save>Готово</button>' : "<span></span>"}</div>
       <label class="field"><span>Что сделать</span><input data-k="title" value="${esc(F.title)}" placeholder="Купить купальник Саше" maxlength="160"></label>
-      <div class="field"><span>Кому</span>${choice("assignee", [[me, "Мне", PEOPLE[me].c], [pa, pa === "zhenya" ? "Жене" : "Любе", PEOPLE[pa].c], ["we", "Нам", PEOPLE.we.c]], F.assignee)}
-        ${F.assignee === pa ? `<span class="note">Придёт как просьба: ${pn(pa)} ответит «Беру» или «Обсудить».</span>` : ""}</div>
+      <div class="field"><span>Кому</span>${choice("assignee", [[me, "Мне", PEOPLE[me].c], [pa, pa === "zhenya" ? "Жене" : "Любе", PEOPLE[pa].c], ["we", F.care || F.cat === "care" ? "Свободная" : "Нам", PEOPLE.we.c]], F.assignee)}
+        ${F.assignee === pa ? `<span class="note">Придёт ${pa === "zhenya" ? "Жене" : "Любе"} уведомлением как просьба: ответит «Беру» или «Обсудить».</span>` : F.assignee === "we" && (F.care || F.cat === "care") ? '<span class="note">Свободная задача: возьмёт тот, у кого будет время.</span>' : ""}</div>
       <div class="field"><span>Тип</span>${choice("kind", TASK_KINDS, F.kind || "")}</div>
       ${(() => { const day = F.due || iso(today()); const evs = eventsOn(day, true).filter((o) => !o.routine);
         return evs.length || F.event_id ? `<div class="field"><span>Это то же, что событие ${fmtDate(day)}?</span>${choice("event_id", [["", "Нет"], ...evs.map((o) => [o.item.id, `${o.start ? o.start + " " : ""}${o.title}`])], F.event_id || "")}
           <span class="note">Отметите задачу — событие отметится сделанным, и наоборот.</span></div>` : ""; })()}
-      <div class="field"><span>Сфера</span>${choice("cat", CATS.map((c) => [c.k, c.n, catC(c.k)]), F.cat)}</div>
+      ${F.care ? "" : `<div class="field"><span>Сфера</span>${choice("cat", CATS.map((c) => [c.k, c.n, catC(c.k)]), F.cat)}</div>`}
       ${F.assignee === me ? `<div class="field"><span>Кто видит</span>${choice("vis", [["private", "только мне"], ["shared", "видно обоим"]], F.vis === "private" ? "private" : "shared")}</div>` : ""}
       <div class="frow"><label class="field"><span>Срок</span><input type="date" data-k="due" value="${F.due || ""}"></label>
         <div class="field" style="justify-content:center">${toggle("important", F.important, "★ Важное")}</div></div>
