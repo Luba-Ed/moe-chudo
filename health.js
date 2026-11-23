@@ -29,65 +29,128 @@ function pillsWidget() {
 const pillBtn = (d, ds) => `<button class="pill${d.taken ? " taken" : ""}" data-pill="${d.p.id}" data-ds="${ds}" data-tm="${d.tm}"><span class="ic"></span><span class="nm">${esc(d.p.data.name)}<small>${d.tm} · ${esc(d.p.data.dose || "")}</small></span><i class="dot" style="background:${PEOPLE[d.p.data.who]?.c}"></i></button>`;
 
 /* ----- цикл ----- */
+// Люба: цикл 26–28 дней, месячные 5 дней. «Безопасные» — 3 дня сразу после месячных (её правило).
+const CYC_DEF = { min: 26, max: 28, plen: 5, safe: 3 };
 const cycleItem = () => S.items.find((i) => i.type === "cycle");
+const addDs = (ds, n) => iso(addD(parse(ds), n));
 function cycleCalc() {
   const it = cycleItem(); if (!it) return null;
+  const st = { ...CYC_DEF, ...(it.data.settings || {}) };
   const ps = [...(it.data.periods || [])].filter((p) => p.start).sort((a, b) => a.start.localeCompare(b.start));
-  if (!ps.length) return { ps, empty: true };
-  const lens = []; for (let i = 1; i < ps.length; i++) lens.push(daysBetween(ps[i - 1].start, ps[i].start));
-  const recent = lens.slice(-6).filter((l) => l >= 18 && l <= 45);
-  const avg = recent.length ? Math.round(recent.reduce((s, x) => s + x, 0) / recent.length) : 28;
-  const plens = ps.filter((p) => p.end).map((p) => daysBetween(p.start, p.end) + 1).filter((l) => l > 0 && l < 12).slice(-6);
-  const plen = plens.length ? Math.round(plens.reduce((s, x) => s + x, 0) / plens.length) : 5;
+  if (!ps.length) return { ps, empty: true, st };
+  const avg = Math.round((st.min + st.max) / 2);
   const last = ps[ps.length - 1], tds = iso(today());
-  const day = daysBetween(last.start, tds) + 1;
-  const next = iso(addD(parse(last.start), avg));
-  const late = tds > next ? daysBetween(next, tds) : 0;
-  const ov = iso(addD(parse(next), -14));
-  const open = !last.end && day <= 10;
-  return { ps, avg, plen, last, day, next, late, ov, open };
+  const lastEnd = last.end || addDs(last.start, st.plen - 1);
+  const open = !last.end && daysBetween(last.start, tds) + 1 <= 10;
+  const late = tds > addDs(last.start, st.max) ? daysBetween(addDs(last.start, st.max), tds) : 0;
+  const c = { ps, st, avg, last, lastEnd, open, late };
+  c.cur = cycleAt(tds, c) || { start: last.start, n: 1, k: 0 };
+  c.day = c.cur.n;
+  const s0 = c.cur.start, pe = c.cur.k === 0 && c.cur.base === last.start ? daysBetween(s0, lastEnd) + 1 : st.plen;
+  c.dates = {
+    next: [addDs(s0, st.min), addDs(s0, st.max)],
+    ov: [addDs(s0, st.min - 15), addDs(s0, st.max - 15)],
+    safe: [addDs(s0, pe), addDs(s0, pe + st.safe - 1)],
+    pms: addDs(s0, st.min - 5),
+  };
+  c.next = c.dates.next[0]; c.ov = c.dates.ov[0];
+  return c;
+}
+// в каком цикле день и какой это день цикла: по отмеченным месячным, дальше — прогноз
+function cycleAt(ds, c) {
+  const before = c.ps.filter((p) => p.start <= ds);
+  if (!before.length) return null;
+  const base = before[before.length - 1], i = c.ps.indexOf(base), nextRec = c.ps[i + 1];
+  if (nextRec) return { start: base.start, n: daysBetween(base.start, ds) + 1, k: 0, base: base.start, len: daysBetween(base.start, nextRec.start), end: base.end };
+  const k = Math.floor(daysBetween(base.start, ds) / c.avg), start = addDs(base.start, k * c.avg);
+  return { start, n: daysBetween(start, ds) + 1, k, base: base.start, len: null, end: k === 0 ? base.end : "" };
 }
 function cyclePhase(ds, c = cycleCalc()) {
   if (!c || c.empty) return null;
-  for (const p of c.ps) { const end = p.end || iso(addD(parse(p.start), c.plen - 1)); if (ds >= p.start && ds <= end) return "period"; }
-  if (ds < c.last.start) return null;
-  for (let k = 0; k < 8; k++) {
-    const st = iso(addD(parse(c.last.start), c.avg * k)), nx = iso(addD(parse(st), c.avg));
-    if (ds < st || ds >= nx) continue;
-    if (k > 0 && ds <= iso(addD(parse(st), c.plen - 1))) return "pred";
-    const ov = iso(addD(parse(nx), -14));
-    if (ds === ov) return "ov";
-    if (ds >= iso(addD(parse(ov), -5)) && ds <= iso(addD(parse(ov), 1))) return "fert";
-    if (ds >= iso(addD(parse(nx), -5))) return "pms";
-    return null;
-  }
+  for (const p of c.ps) { const end = p.end || addDs(p.start, c.st.plen - 1); if (ds >= p.start && ds <= end) return "period"; }
+  const at = cycleAt(ds, c); if (!at) return null;
+  const st = c.st, n = at.n;
+  if (at.k > 0 && n <= st.plen) return "pred";
+  // окна в днях цикла: по фактической длине прошлого цикла или по 26–28 для прогноза
+  const lo = at.len || st.min, hi = at.len || st.max;
+  const ov = [lo - 14, hi - 14], fert = [lo - 19, hi - 13], pmsFrom = lo - 4;
+  const pe = at.end ? daysBetween(at.start, at.end) + 1 : st.plen;
+  if (n > pe && n <= pe + st.safe) return n >= fert[0] ? "safe risk" : "safe";
+  if (n >= ov[0] && n <= ov[1]) return "ov";
+  if (n >= fert[0] && n <= fert[1]) return "fert";
+  if (n >= pmsFrom) return "pms";
   return null;
 }
-const PHASE_N = { period: "месячные", pred: "месячные (прогноз)", fert: "фертильные дни", ov: "овуляция", pms: "ПМС" };
+const PHASE_N = { period: "месячные", pred: "месячные (прогноз)", fert: "фертильные дни", ov: "овуляция", pms: "ПМС", safe: "безопасные дни", "safe risk": "безопасные по правилу 3 дней, но могут совпасть с фертильным окном" };
+const rangeTxt = (a, b) => (a === b ? fmtDate(a) : parse(a).getMonth() === parse(b).getMonth() ? `${parse(a).getDate()}–${fmtDate(b)}` : `${fmtDate(a)} – ${fmtDate(b)}`);
 function cycleSummary(c) {
   if (!c || c.empty) return { big: "Нет данных", sub: "Отметьте начало месячных" };
-  const ph = cyclePhase(iso(today()), c);
-  const phase = ph === "period" ? "месячные" : ph === "ov" ? "овуляция" : ph === "fert" ? "фертильные дни" : ph === "pms" ? "ПМС" : c.day <= 14 ? "фолликулярная фаза" : "лютеиновая фаза";
-  const left = daysBetween(iso(today()), c.next);
-  return { big: `День ${c.day} из ${c.avg}`, sub: phase, next: c.late ? `задержка ${c.late} ${plural(c.late, "день", "дня", "дней")}` : `месячные ~${fmtDate(c.next)}, через ${left} ${plural(left, "день", "дня", "дней")}`, ph };
+  const t = iso(today()), ph = cyclePhase(t, c);
+  const phase = ph ? PHASE_N[ph].split(" по ")[0] : c.day <= 14 ? "фолликулярная фаза" : "лютеиновая фаза";
+  const D = c.dates, left = daysBetween(t, D.next[0]);
+  const lines = [];
+  lines.push(c.late ? `Задержка ${c.late} ${plural(c.late, "день", "дня", "дней")}` : `Месячные ~${rangeTxt(D.next[0], D.next[1])}${left > 0 ? `, через ${left} ${plural(left, "день", "дня", "дней")}` : ""}`);
+  lines.push(`Овуляция ~${rangeTxt(D.ov[0], D.ov[1])}`);
+  if (D.safe[1] >= t) lines.push(`Безопасные дни: ${rangeTxt(D.safe[0], D.safe[1])}`);
+  lines.push(`ПМС с ~${fmtDate(D.pms)}`);
+  return { big: `День ${c.day}`, sub: phase, lines, next: lines[0], ph };
 }
 function partnerHint(c) {
   if (!c || c.empty) return "";
-  const t = iso(today()), ph = cyclePhase(t, c), left = daysBetween(t, c.next);
+  const t = iso(today()), ph = cyclePhase(t, c), toPms = daysBetween(t, c.dates.pms);
   if (ph === "period") return "У Любы месячные. Хороший день взять на себя побольше дел.";
-  if (ph === "pms") return `У Любы ПМС, месячные примерно через ${left} ${plural(left, "день", "дня", "дней")}. Побольше бережности.`;
-  if (left > 0 && left <= 7) return `Через ${left} ${plural(left, "день", "дня", "дней")} у Любы начнётся ПМС.`;
+  if (ph === "pms") return "У Любы ПМС: может быть раздражительной, это гормоны, а не ты. Побольше бережности и терпения.";
+  if (toPms > 0 && toPms <= 3) return `Через ${toPms} ${plural(toPms, "день", "дня", "дней")} у Любы начнётся ПМС.`;
   return "";
 }
 function cycleWidget() {
   const c = cycleCalc(); if (!c) return "";
   const s = cycleSummary(c), isLuba = S.me.person === "luba";
-  const strip = c.empty ? "" : `<div class="cyc-strip">${Array.from({ length: c.avg }, (_, i) => { const ds = iso(addD(parse(c.last.start), i)); const ph = cyclePhase(ds, c) || ""; return `<i class="${ph}${ds === iso(today()) ? " now" : ""}" title="день ${i + 1}"></i>`; }).join("")}</div>`;
+  const strip = c.empty ? "" : `<div class="cyc-strip">${Array.from({ length: c.st.max }, (_, i) => { const ds = addDs(c.cur.start, i); const ph = cyclePhase(ds, c) || ""; return `<i class="${ph}${ds === iso(today()) ? " now" : ""}" title="день ${i + 1}${ph ? ": " + PHASE_N[ph] : ""}"></i>`; }).join("")}</div>`;
   return `<div class="w"><h4><button class="linkh" data-go="health" data-sub="cycle">Цикл Любы</button><span class="mono">${isLuba ? "видит и Женя" : "заносит Люба"}</span></h4>
     <div><div class="cyc-big">${s.big}</div><div class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">${esc(s.sub)}</div></div>
-    ${strip}${s.next ? `<span class="note">${esc(s.next)}</span>` : ""}
+    ${strip}${(s.lines || []).map((l) => `<span class="note">${esc(l)}</span>`).join("")}
     ${!isLuba && partnerHint(c) ? `<span class="hint-card">${esc(partnerHint(c))}</span>` : ""}
     ${isLuba ? `<button class="btn sm" data-cyc-quick>${c.open ? "Месячные закончились" : "Начались месячные"}</button>` : ""}</div>`;
+}
+function openCycleSettings() {
+  const it = cycleItem(), d = it ? it.data : { periods: [], days: {} };
+  const F = { ...CYC_DEF, ...(d.settings || {}) };
+  openModal(`<div class="sheet-h"><button data-close>Отмена</button><b>Настройки цикла</b><button class="go" data-save>Готово</button></div>
+    <div class="frow"><label class="field"><span>Цикл от, дней</span><input data-k="min" type="number" min="20" max="40" value="${F.min}"></label><label class="field"><span>до, дней</span><input data-k="max" type="number" min="20" max="40" value="${F.max}"></label></div>
+    <div class="frow"><label class="field"><span>Месячные, дней</span><input data-k="plen" type="number" min="2" max="10" value="${F.plen}"></label><label class="field"><span>Безопасных дней после</span><input data-k="safe" type="number" min="0" max="7" value="${F.safe}"></label></div>
+    <span class="note">Овуляция считается за 14 дней до следующих месячных, фертильное окно — 5 дней до неё и день после. ПМС — 5 дней до месячных.</span>
+    <div class="sheet-foot"><span></span><button class="btn primary" data-save>Сохранить</button></div>`, (m) => {
+    bindForm(m, F, () => {});
+    $("[data-close]", m).onclick = closeModal;
+    $$("[data-save]", m).forEach((b) => (b.onclick = async () => {
+      const n = (k, lo, hi) => Math.min(hi, Math.max(lo, Math.round(+F[k] || CYC_DEF[k])));
+      let min = n("min", 20, 40), max = n("max", 20, 40); if (max < min) [min, max] = [max, min];
+      closeModal();
+      await saveCycle({ ...d, settings: { min, max, plen: n("plen", 2, 10), safe: n("safe", 0, 7) } }, "Настройки цикла сохранены");
+    }));
+  });
+}
+
+/* ----- вода: стаканы по 250 мл ----- */
+const WATER_GOAL = { luba: 1500, zhenya: 2000 }, GLASS_ML = 250;
+const waterItem = (p) => S.items.find((i) => i.type === "kv" && i.data.key === "water_" + p);
+const waterCount = (p, ds = iso(today())) => waterItem(p)?.data.log?.[ds] || 0;
+async function setWater(p, n) {
+  const it = waterItem(p), ds = iso(today());
+  const data = { key: "water_" + p, goal: WATER_GOAL[p], ...(it ? it.data : {}) };
+  data.log = { ...(data.log || {}), [ds]: Math.max(0, n) };
+  const goalN = Math.round((data.goal || WATER_GOAL[p]) / GLASS_ML);
+  await saveItem(it ? { ...it, data } : { type: "kv", vis: "shared", data }, n >= goalN && waterCount(p) < goalN ? `${pn(p)}: норма воды выполнена` : null);
+}
+const glassSVG = (on) => `<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M3 3h18l-2.2 25a2 2 0 0 1-2 1.8H7.2a2 2 0 0 1-2-1.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>${on ? '<path d="M5 11h14l-1.5 16.6a1.5 1.5 0 0 1-1.5 1.4H8a1.5 1.5 0 0 1-1.5-1.4z" fill="var(--water)"/>' : ""}</svg>`;
+function waterPanel() {
+  return `<div class="panel"><h2>Вода <span class="mono muted" style="font-size:11px;font-weight:400">стакан = 250 мл</span></h2>
+    ${["luba", "zhenya"].map((p) => { const goal = waterItem(p)?.data.goal || WATER_GOAL[p], total = Math.round(goal / GLASS_ML), n = waterCount(p);
+      return `<div class="water"><div class="water-h"><span><i class="dot" style="background:${PEOPLE[p].c}"></i> ${pn(p)}</span><span class="mono">${(n * GLASS_ML / 1000).toLocaleString("ru-RU")} из ${(goal / 1000).toLocaleString("ru-RU")} л${n >= total ? " ✓" : ""}</span></div>
+        <div class="glasses">${Array.from({ length: Math.max(total, n) }, (_, i) => `<button class="glass${i < n ? " on" : ""}${i >= total ? " extra" : ""}" data-water="${p}" data-i="${i + 1}" aria-label="${i < n ? "Убрать" : "Выпит"} стакан ${i + 1}">${glassSVG(i < n)}</button>`).join("")}
+          <button class="glass add" data-water="${p}" data-i="${n + 1}" aria-label="Ещё стакан сверх нормы">+</button></div></div>`; }).join("")}
+    <span class="note">Нажмите на стакан, когда выпили. Нажали лишний — нажмите на последний полный, он опустеет. Каждый день начинается с пустых стаканов.</span></div>`;
 }
 async function saveCycle(data, msg) {
   const it = cycleItem();
@@ -143,7 +206,8 @@ function renderHealth(main) {
   main.innerHTML = `<div class="page-h">${mobBack()}<h1>Здоровье</h1></div>
     <div class="grid2">
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
-        <div class="panel"><h2>Сегодня <button class="btn" data-new-pill>+ Таблетка</button></h2>
+        ${waterPanel()}
+        <div class="panel"><h2>Таблетки сегодня <button class="btn" data-new-pill>+ Таблетка</button></h2>
           ${by.map((g) => `<div class="mini-h"><i class="dot" style="background:${PEOPLE[g.w].c}"></i> ${pn(g.w)}</div>${g.list.map((d) => pillBtn(d, ds)).join("")}`).join("") || '<span class="note">Добавьте витамины или курс таблеток — приложение будет напоминать.</span>'}</div>
         <div class="panel"><h2>Все таблетки и курсы</h2>
           ${pills().map((p) => { const per = p.data.times?.length || 1; return `<button class="medrow" data-pill-open="${p.id}"><i class="dot" style="background:${PEOPLE[p.data.who]?.c}"></i><span class="on"><b>${esc(p.data.name)}</b><small>${esc(p.data.dose || "")} · ${(p.data.times || []).join(", ")} · ${courseText(p)}</small></span>
@@ -151,17 +215,18 @@ function renderHealth(main) {
           <span class="note">Квадратики — последние 7 дней: зелёный — всё принято.</span></div>
       </div>
       <div class="panel" id="cycle"><h2>Цикл Любы <span class="mono muted" style="font-size:11px;font-weight:400">${isLuba ? "видит и Женя, менять можете только вы" : "заносит только Люба"}</span></h2>
-        ${c ? `<div class="cyc-sum"><div><div class="cyc-big">${s.big}</div><div class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">${esc(s.sub)}</div></div><div class="note" style="text-align:right">${esc(s.next || "")}${c.ov && !c.empty ? `<br>овуляция ~${fmtDate(c.ov)}` : ""}</div></div>
+        ${c ? `<div class="cyc-sum"><div><div class="cyc-big">${s.big}</div><div class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">${esc(s.sub)}</div></div><div class="cyc-lines">${(s.lines || []).map((l) => `<span>${esc(l)}</span>`).join("")}</div></div>
           ${!isLuba && partnerHint(c) ? `<span class="hint-card">${esc(partnerHint(c))}</span>` : ""}
           <div class="calbar" style="gap:8px"><b style="font-size:16px">${MONTHS[mo]} ${y}</b><span class="spacer"></span><div class="arrows"><button class="icon-btn" data-cm="-1" aria-label="Прошлый месяц">‹</button><button class="icon-btn" data-cm="1" aria-label="Следующий месяц">›</button></div></div>
           <div class="cyc-grid">${grid}</div>
-          <div class="legend"><span><i style="background:var(--luba)"></i>месячные</span><span><i style="box-shadow:0 0 0 1.5px var(--luba) inset"></i>прогноз</span><span><i style="background:color-mix(in srgb,var(--luba) 28%,transparent)"></i>фертильные</span><span><i style="box-shadow:0 0 0 2px var(--fg) inset"></i>овуляция</span><span><i style="background:color-mix(in srgb,var(--c-care) 32%,transparent)"></i>ПМС</span></div>
+          <div class="legend"><span><i style="background:var(--luba)"></i>месячные</span><span><i style="box-shadow:0 0 0 1.5px var(--luba) inset"></i>прогноз</span><span><i style="background:color-mix(in srgb,var(--luba) 28%,transparent)"></i>фертильные</span><span><i style="box-shadow:0 0 0 2px var(--fg) inset"></i>овуляция</span><span><i style="background:color-mix(in srgb,var(--c-care) 32%,transparent)"></i>ПМС</span><span><i style="background:color-mix(in srgb,var(--we) 40%,transparent)"></i>безопасные</span><span><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--we) 40%,transparent) 0 3px,color-mix(in srgb,var(--luba) 28%,transparent) 3px 6px)"></i>безопасные, но рядом фертильное окно</span></div>
           ${isLuba ? `<span class="note">Нажмите на день: первый раз — начало месячных, второй (в течение 10 дней) — конец. На отмеченный день — самочувствие и заметка.</span><button class="btn primary" data-cyc-quick>${c.open ? "Месячные закончились сегодня" : "Начались месячные сегодня"}</button>` : ""}
-          ${!c.empty ? `<span class="note">Средний цикл ${c.avg} ${plural(c.avg, "день", "дня", "дней")}, месячные ${c.plen} ${plural(c.plen, "день", "дня", "дней")}. Прогноз точнее, когда отмечено 3+ цикла. Это не метод контрацепции.</span>` : ""}`
+          <span class="note">Считаю по циклу ${c.st.min}–${c.st.max} дней и месячным ${c.st.plen} дней${isLuba ? ' (<button class="linkbtn" data-cyc-set>изменить</button>)' : ""}. «Безопасные» — ${c.st.safe} дня после месячных, как вы просили. Календарный способ не защищает надёжно: при цикле ${c.st.min} дней эти дни могут совпасть с фертильным окном — они помечены штриховкой.</span>`
           : isLuba ? `<span class="note">Отметьте начало последних месячных — приложение посчитает прогноз.</span><button class="btn primary" data-cyc-quick>Начались месячные сегодня</button>` : '<span class="note">Люба ещё не заполнила календарь.</span>'}
       </div>
     </div>`;
   $("[data-new-pill]", main).onclick = () => openPill(null);
+  const cs = $("[data-cyc-set]", main); if (cs) cs.onclick = openCycleSettings;
   $$("[data-pill-open]", main).forEach((b) => (b.onclick = () => openPill(b.dataset.pillOpen)));
   $$("[data-cm]", main).forEach((b) => (b.onclick = () => { S.cmonth = new Date(y, mo + +b.dataset.cm, 1); render(); }));
   $$("[data-cday]", main).forEach((b) => (b.onclick = () => {
@@ -175,6 +240,7 @@ function renderHealth(main) {
 function bindHealth(root) {
   $$("[data-pill]", root).forEach((b) => (b.onclick = () => togglePill(b.dataset.pill, b.dataset.ds, b.dataset.tm)));
   $$("[data-cyc-quick]", root).forEach((b) => (b.onclick = () => cycleMark(iso(today()))));
+  $$("[data-water]", root).forEach((b) => (b.onclick = () => { const p = b.dataset.water, i = +b.dataset.i; setWater(p, waterCount(p) === i ? i - 1 : i); }));
 }
 function openPill(id) {
   const p = id ? pills().find((x) => x.id === id) : null;
