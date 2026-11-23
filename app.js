@@ -121,8 +121,35 @@ const requestsToMe = () => tasks().filter((t) => t.data.assignee === S.me.person
 
 async function reload() {
   S.items = (await guard(() => DB.load(S.me))) || S.items;
+  if (await rollover()) S.items = (await guard(() => DB.load(S.me))) || S.items;
   render();
 }
+// Задачи «Сделать», «Созвониться», «Оплатить», которые не выполнены в срок,
+// сами переезжают на сегодня — и так каждый день, пока их не отметят.
+const ROLL_KINDS = ["do", "call", "pay"];
+let rolling = false;
+async function rollover() {
+  if (rolling) return false;
+  const t = iso(today());
+  const late = tasks().filter((x) => ROLL_KINDS.includes(x.data.kind) && x.data.due && x.data.due < t
+    && !["done", "declined"].includes(x.data.status) && canEdit(x));
+  if (!late.length) return false;
+  rolling = true;
+  try {
+    for (const x of late) {
+      const d = x.data;
+      await guard(() => DB.save({ ...x, data: { ...d, due: t, first_due: d.first_due || d.due } }, S.me));
+    }
+  } finally { rolling = false; }
+  return true;
+}
+// открыли приложение после полуночи — переносим без перезагрузки
+let lastDay = iso(today());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && S.me?.person && iso(today()) !== lastDay) {
+    lastDay = iso(today()); S.sel = today(); S.cursor = today(); reload();
+  }
+});
 async function saveItem(item, msg) {
   await guard(() => DB.save(item, S.me));
   if (msg) toast(msg);
@@ -135,6 +162,7 @@ async function boot() {
   if (!S.me) return renderLogin();
   if (!S.me.person) return renderNoProfile();
   S.items = (await guard(() => DB.load(S.me))) || [];
+  if (await rollover()) S.items = (await guard(() => DB.load(S.me))) || S.items;
   try { S.cycleLayer = !!localStorage.getItem("pazlik-cycle-layer"); } catch {}
   DB.subscribe(reload);
   render();
@@ -360,6 +388,7 @@ function dayTasks(ds) {
 function taskShort(t, ds) {
   const d = t.data, me = S.me.person;
   if (d.due && d.due < ds && d.status !== "done") return `было ${fmtDate(d.due)}`;
+  if (d.first_due && d.first_due < d.due && d.status !== "done") return `переносится с ${fmtDate(d.first_due)}`;
   if (d.status === "asked") return d.by === me ? `ждёт ответа ${d.assignee === "zhenya" ? "Жени" : "Любы"}` : `просьба ${d.by === "zhenya" ? "Жени" : "Любы"}`;
   if (d.status === "discuss") return "надо обсудить";
   return d.note || "";
@@ -465,6 +494,7 @@ function taskMeta(t) {
   const d = t.data, me = S.me.person, parts = [];
   if (d.kind) parts.push(kindName(d.kind));
   if (d.cat) parts.push(catName(d.cat));
+  if (d.first_due && d.first_due < d.due && d.status !== "done") parts.push(`переносится с ${fmtDate(d.first_due)}`);
   if (d.by && d.assignee !== d.by) {
     if (d.status === "asked") parts.push(d.by === me ? `ждёт ответа ${d.assignee === "zhenya" ? "Жени" : "Любы"}` : `${pn(d.by)} ${VERB[d.by].ask}`);
     else if (d.status === "discuss") parts.push(`${pn(d.assignee)} ${VERB[d.assignee]?.talk || "хочет обсудить"}`);
@@ -779,6 +809,7 @@ async function saveTask(t, F) {
     if (F.assignee !== me && F.assignee !== "we" && (prev.assignee !== F.assignee || status === "declined" || !t)) status = "asked";
     else if (F.assignee === me || F.assignee === "we") status = prev.assignee === F.assignee && status !== "asked" ? status : "open";
   }
+  if (t && (F.due || "") !== (prev.due || "")) delete prev.first_due; // срок поменяли вручную — счёт переносов заново
   const data = { ...prev, title: F.title.trim(), kind: F.kind || "", event_id: F.event_id || "", event_date: F.event_id ? F.due || iso(today()) : "", cat: F.cat, assignee: F.assignee, due: F.due || "", important: !!F.important, note: (F.note || "").trim(), status, by: prev.by || me };
   if (status === "asked" || status === "open") data.taken_by = status === "open" ? null : prev.taken_by || null;
   const vis = F.assignee === me && F.vis === "private" ? "private" : "shared";
