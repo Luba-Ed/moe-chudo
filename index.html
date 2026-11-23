@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Моё чудо</title>
+  <meta name="theme-color" content="#0e0f13">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Моё чудо">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="icon" href="icon-32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css?v=20261123a">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="modal" class="modal" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="config.js?v=20261123a"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="data.js?v=20261123a"></script>
+  <script src="app.js?v=20261123a"></script>
+  <script src="money.js?v=20261123a"></script>
+  <script src="health.js?v=20261123a"></script>
+  <script src="balance.js?v=20261123a"></script>
+  <script src="vault.js?v=20261123a"></script>
+  <script>
+    // На бесплатном Netlify снизу справа появляется плашка «Powered by Netlify».
+    // Не прячем её, а поднимаем меню и кнопку «+», чтобы она их не закрывала.
+    (function () {
+      const mark = () => document.getElementById("nl-badge-frame") && document.documentElement.classList.add("nl-badge");
+      if (mark()) return;
+      const mo = new MutationObserver(() => { if (mark()) mo.disconnect(); });
+      mo.observe(document.body, { childList: true });
+    })();
+    boot();
+  </script>
+</body>
+</html>
