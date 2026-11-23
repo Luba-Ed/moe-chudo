@@ -16,7 +16,7 @@ const TASK_KINDS = [["", "Без выбора"], ["do", "Сделать"], ["cal
 const kindName = (k) => (k ? TASK_KINDS.find((x) => x[0] === k)?.[1] || "" : "");
 const catC = (k) => `var(--c-${k || "self"})`;
 const VERB = { luba: { set: "поставила", take: "взяла", ask: "просит", no: "не успевает", talk: "хочет обсудить" }, zhenya: { set: "поставил", take: "взял", ask: "просит", no: "не успевает", talk: "хочет обсудить" } };
-const PICKS = [["", "не назначено"], ["luba", "Люба"], ["zhenya", "Женя"], ["babushka", "Бабушка"], ["self", "Сама / с тренером"]];
+const PICKS = [["", "не назначено"], ["luba", "Люба"], ["zhenya", "Женя"], ["we", "Вместе"], ["babushka", "Бабушка"], ["self", "Сама / с тренером"]];
 const ICONS = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="16" rx="3"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>',
   tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="7" r="2.5"/><path d="m4.9 7 .8.8 1.5-1.6"/><circle cx="6" cy="17" r="2.5"/><path d="M11 7h9M11 17h9"/></svg>',
@@ -272,10 +272,11 @@ function whoDots(o) {
 function logiText(o, short = false) {
   if (o.who !== "sasha" || o.all_day) return "";
   if (needsPick(o)) return short ? "никто не заб" : "никто не забирает";
-  if (o.pick) return `${short ? "заб" : "забирает"} ${o.pick === "self" ? "сама" : pn(o.pick)}`;
-  return o.drop ? `${short ? "отв" : "отвозит"} ${pn(o.drop)}` : "";
+  if (o.pick) return o.pick === "we" ? (short ? "заб вместе" : "забирают вместе") : `${short ? "заб" : "забирает"} ${o.pick === "self" ? "сама" : pn(o.pick)}`;
+  return o.drop ? (o.drop === "we" ? (short ? "отв вместе" : "отвозят вместе") : `${short ? "отв" : "отвозит"} ${pn(o.drop)}`) : "";
 }
-const evBtn = (o) => `<button class="ev${needsPick(o) ? " warn" : ""}${o.item.vis === "private" ? " private" : ""}" style="--c:${catC(o.cat)}" data-ev="${o.item.id}" data-ds="${o.ds}">
+const evDone = (o) => (o.done_dates || []).includes(o.ds);
+const evBtn = (o) => `<button class="ev${needsPick(o) ? " warn" : ""}${evDone(o) ? " done" : ""}${o.item.vis === "private" ? " private" : ""}" style="--c:${catC(o.cat)}" data-ev="${o.item.id}" data-ds="${o.ds}">
   <span class="tx"><span>${esc(timeLabel(o))}</span><b>${esc(o.title)}</b>${logiText(o, true) ? `<small>${esc(logiText(o, true))}</small>` : ""}</span>${whoDots(o)}</button>`;
 
 function weekHTML() {
@@ -357,8 +358,8 @@ function todayHTML() {
     const total = ct.length + cp.length;
     return `<div class="col${c.k === "important" ? " important" : ""}" style="--c:${catC(c.k)}">
       <h3>${c.n}<span>${n}/${total}</span></h3>${c.k !== "important" ? '<div class="stripe"></div>' : ""}
-      ${cp.map(({ p, st }) => `<div class="trow${st.overdue ? " over" : ""}"><span class="rub">₽</span><button class="tt" data-pay-open="${p.id}"><span>${esc(p.data.title)} · ${rub(p.data.amount)}</span><small>${st.overdue ? "просрочено с " + fmtDate(st.ds) : "оплатить сегодня"}</small></button><button class="paybtn" data-pay="${p.id}">Оплатить</button></div>`).join("")}
-      ${ce.map((o) => o.wheel ? `<div class="trow${(o.done_dates || []).includes(o.ds) ? " done" : ""}"><button class="ck${(o.done_dates || []).includes(o.ds) ? " on" : ""}" data-evdone="${o.item.id}" data-ds="${o.ds}" aria-label="Сделано"></button><button class="tt" data-ev="${o.item.id}" data-ds="${o.ds}"><span>${esc(o.title)}</span><small>${esc(o.all_day ? "в течение дня" : o.start || "")} · колесо</small></button><i class="who" style="background:${PEOPLE[o.who]?.c}"></i></div>`
+      ${cp.map(({ p, st }) => `<div class="trow${st.overdue ? " over" : ""}"><span class="rub">₽</span><button class="tt" data-pay-open="${p.id}"><span>${esc(p.data.title)} · ${payAmt(p)}</span><small>${p.data.urgent ? "срочно · " : ""}${st.overdue ? "просрочено с " + fmtDate(st.ds) : "оплатить сегодня"}</small></button><button class="paybtn" data-pay="${p.id}">Оплатить</button></div>`).join("")}
+      ${ce.map((o) => o.wheel || o.task_id ? `<div class="trow${(o.done_dates || []).includes(o.ds) ? " done" : ""}"><button class="ck${(o.done_dates || []).includes(o.ds) ? " on" : ""}" data-evdone="${o.item.id}" data-ds="${o.ds}" aria-label="Сделано"></button><button class="tt" data-ev="${o.item.id}" data-ds="${o.ds}"><span>${esc(o.title)}</span><small>${esc([o.all_day ? "в течение дня" : o.start || "", o.wheel ? "колесо" : "событие"].filter(Boolean).join(" · "))}</small></button><i class="who" style="background:${PEOPLE[o.who]?.c}"></i></div>`
         : `<button class="erow" data-ev="${o.item.id}" data-ds="${o.ds}"><span class="t">${esc(o.all_day ? "день" : o.start || "")}</span><span>${esc(o.title)}${logiText(o) ? ` · ${esc(logiText(o))}` : ""}</span></button>`).join("")}
       ${ct.map((t) => { const d = t.data, over = d.due && d.due < ds && d.status !== "done";
         // в «Важном» подписываем, из какого списка задача и до какого числа
@@ -369,13 +370,15 @@ function todayHTML() {
   };
   const al = alertsList(), reqs = requestsToMe();
   const tds = iso(today());
-  const payAl = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.paid && x.st.soon && x.st.left > 0);
+  const payAl = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.paid && x.st.soon && x.st.left > 0 && !x.p.data.urgent);
+  const urgent = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => x.p.data.urgent && !x.st.paid && !x.st.ended);
   const docAl = docExpiring(30);
   const pct = ts.length ? Math.round((done / ts.length) * 100) : 0;
   return `<div class="today-h"><span class="d">${fmtLong(ds)}</span><h2>${isT ? "Сегодня" : WDN[wd(S.sel)]}</h2>
       <span class="st">задач ${ts.length} · сделано ${done} · осталось ${ts.length - done}</span>
       <span class="today-add"><button class="btn sm" data-addev="${ds}">+ Событие</button><button class="btn sm" data-addtask="${ds}">+ Задача</button></span>${isT ? "" : '<button class="back" data-nav-today>← вернуться к сегодня</button>'}</div>
-    ${al.length || reqs.length || payAl.length || docAl.length ? `<div class="alerts">
+    ${al.length || reqs.length || payAl.length || docAl.length || urgent.length ? `<div class="alerts">
+      ${urgent.map(({ p, st }) => `<div class="alert"><span><b>Срочно оплатить:</b> ${esc(p.data.title)} · ${payAmt(p)} · ${st.left < 0 ? "просрочено" : st.left === 0 ? "сегодня" : "до " + fmtDate(st.ds)}${p.data.note ? " · " + esc(p.data.note) : ""}</span><button data-pay="${p.id}">Оплатить</button></div>`).join("")}
       ${payAl.map(({ p, st }) => `<div class="alert info"><span>Скоро платёж: ${esc(p.data.title)} ${rub(p.data.amount)}, ${dueLabel(st)}</span><button data-pay="${p.id}">Оплатить</button></div>`).join("")}
       ${docAl.map((d) => `<div class="alert info"><span>${esc(d.data.title)}: ${d.data.expires < tds ? "срок истёк " + fmtDate(d.data.expires) : "действует до " + fmtDate(d.data.expires)}</span><button data-open-doc="${d.id}">Открыть</button></div>`).join("")}
       ${al.map((a) => `<div class="alert"><span>${fmtShort(a.ds)}, ${esc(a.o.title)} ${esc(a.o.start || "")}: никто не забирает Сашу</span><button data-fix="${a.o.item.id}" data-ds="${a.ds}">Назначить</button></div>`).join("")}
@@ -412,6 +415,17 @@ async function toggleDone(id) {
   const done = t.data.status !== "done";
   const data = { ...t.data, status: done ? "done" : t.data.taken_by ? "accepted" : "open", done_on: done ? iso(today()) : null, done_by: done ? S.me.person : null };
   await saveItem({ ...t, data }, done ? "Готово" : null);
+  await syncLinkedEvent(t, done);
+}
+// задача и событие-дубль (например, «Сходить на чистку» и «Чистка в Небольсин») отмечаются вместе
+async function syncLinkedEvent(t, done) {
+  const e = t.data.event_id && events().find((x) => x.id === t.data.event_id);
+  if (!e) return;
+  const ds = t.data.event_date || e.data.date;
+  const set = new Set(e.data.done_dates || []);
+  if (done === set.has(ds)) return;
+  done ? set.add(ds) : set.delete(ds);
+  await saveItem({ ...e, data: { ...e.data, done_dates: [...set] } });
 }
 const starBtn = (t) => `<button class="star${t.data.important ? " on" : ""}" data-star="${t.id}" aria-pressed="${!!t.data.important}" aria-label="${t.data.important ? "Убрать из важного" : "В важное"}" title="${t.data.important ? "Убрать из важного" : "В важное"}">${t.data.important ? "★" : "☆"}</button>`;
 async function toggleStar(id) {
@@ -712,6 +726,9 @@ function openTask(id, preset = {}) {
       <div class="field"><span>Кому</span>${choice("assignee", [[me, "Мне", PEOPLE[me].c], [pa, pa === "zhenya" ? "Жене" : "Любе", PEOPLE[pa].c], ["we", "Нам", PEOPLE.we.c]], F.assignee)}
         ${F.assignee === pa ? `<span class="note">Придёт как просьба: ${pn(pa)} ответит «Беру» или «Обсудить».</span>` : ""}</div>
       <div class="field"><span>Тип</span>${choice("kind", TASK_KINDS, F.kind || "")}</div>
+      ${(() => { const day = F.due || iso(today()); const evs = eventsOn(day, true).filter((o) => !o.routine);
+        return evs.length || F.event_id ? `<div class="field"><span>Это то же, что событие ${fmtDate(day)}?</span>${choice("event_id", [["", "Нет"], ...evs.map((o) => [o.item.id, `${o.start ? o.start + " " : ""}${o.title}`])], F.event_id || "")}
+          <span class="note">Отметите задачу — событие отметится сделанным, и наоборот.</span></div>` : ""; })()}
       <div class="field"><span>Сфера</span>${choice("cat", CATS.map((c) => [c.k, c.n, catC(c.k)]), F.cat)}</div>
       ${F.assignee === me ? `<div class="field"><span>Кто видит</span>${choice("vis", [["private", "только мне"], ["shared", "видно обоим"]], F.vis === "private" ? "private" : "shared")}</div>` : ""}
       <div class="frow"><label class="field"><span>Срок</span><input type="date" data-k="due" value="${F.due || ""}"></label>
@@ -743,10 +760,13 @@ async function saveTask(t, F) {
     if (F.assignee !== me && F.assignee !== "we" && (prev.assignee !== F.assignee || status === "declined" || !t)) status = "asked";
     else if (F.assignee === me || F.assignee === "we") status = prev.assignee === F.assignee && status !== "asked" ? status : "open";
   }
-  const data = { ...prev, title: F.title.trim(), kind: F.kind || "", cat: F.cat, assignee: F.assignee, due: F.due || "", important: !!F.important, note: (F.note || "").trim(), status, by: prev.by || me };
+  const data = { ...prev, title: F.title.trim(), kind: F.kind || "", event_id: F.event_id || "", event_date: F.event_id ? F.due || iso(today()) : "", cat: F.cat, assignee: F.assignee, due: F.due || "", important: !!F.important, note: (F.note || "").trim(), status, by: prev.by || me };
   if (status === "asked" || status === "open") data.taken_by = status === "open" ? null : prev.taken_by || null;
   const vis = F.assignee === me && F.vis === "private" ? "private" : "shared";
   closeModal();
-  await saveItem(t ? { ...t, vis, data } : { type: "task", vis, data }, t ? "Сохранено" : status === "asked" ? `Просьба отправлена ${F.assignee === "zhenya" ? "Жене" : "Любе"}` : "Задача добавлена");
+  const tid = t ? t.id : uid();
+  if (data.event_id) { const e = events().find((x) => x.id === data.event_id); if (e && e.data.task_id !== tid) await guard(() => DB.save({ ...e, data: { ...e.data, task_id: tid } }, S.me)); }
+  if (prev.event_id && prev.event_id !== data.event_id) { const e = events().find((x) => x.id === prev.event_id); if (e && e.data.task_id === tid) { const ed = { ...e.data }; delete ed.task_id; await guard(() => DB.save({ ...e, data: ed }, S.me)); } }
+  await saveItem(t ? { ...t, vis, data } : { id: tid, type: "task", vis, data }, t ? "Сохранено" : status === "asked" ? `Просьба отправлена ${F.assignee === "zhenya" ? "Жене" : "Любе"}` : "Задача добавлена");
 }
 

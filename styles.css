@@ -540,3 +540,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* окно редактирования: кнопки «Сохранить / Добавить» внизу не должны попадать под плашку Netlify */
 .nl-badge .sheet { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 76px); }
 @media (min-width: 700px) { .nl-badge .modal { padding-bottom: 64px; } }
+
+/* сделанное событие и срочный платёж */
+.ev.done b { text-decoration: line-through; opacity: .55; }
+.urg { font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--warn); border-radius: 5px; padding: 1px 5px; vertical-align: 1px; }

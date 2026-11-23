@@ -27,6 +27,12 @@ async function toggleEvDone(id, ds) {
   const set = new Set(e.data.done_dates || []);
   set.has(ds) ? set.delete(ds) : set.add(ds);
   await saveItem({ ...e, data: { ...e.data, done_dates: [...set] } }, set.has(ds) ? "Сделано" : null);
+  // если событие связано с задачей — отмечаем и её
+  const t = e.data.task_id && tasks().find((x) => x.id === e.data.task_id);
+  if (t && (t.data.status === "done") !== set.has(ds)) {
+    const done = set.has(ds);
+    await saveItem({ ...t, data: { ...t.data, status: done ? "done" : t.data.taken_by ? "accepted" : "open", done_on: done ? iso(today()) : null, done_by: done ? S.me.person : null } });
+  }
 }
 
 function wheelSVG(owner, mon, sel, size = 440, labels = true) {

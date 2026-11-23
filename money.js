@@ -9,6 +9,7 @@ const MCATS = [
 const ICATS = [{ k: "salary", n: "Зарплата" }, { k: "extra", n: "Подработка" }, { k: "gift", n: "Подарок" }, { k: "other", n: "Другое" }];
 const mcat = (k) => MCATS.find((c) => c.k === k) || MCATS[MCATS.length - 1];
 const rub = (n) => Math.round(n || 0).toLocaleString("ru-RU") + " ₽";
+const payAmt = (p) => (+p.data.amount > 0 ? rub(p.data.amount) : "сумма не указана");
 const payments = () => S.items.filter((i) => i.type === "payment");
 const moneyOps = () => S.items.filter((i) => i.type === "money");
 const budget = () => kv("budget")?.data || { key: "budget", salary_days: [10, 25] };
@@ -66,6 +67,7 @@ function nextSalary() {
 async function payNow(id) {
   const p = payments().find((x) => x.id === id); if (!p) return;
   const st = payStatus(p), d = p.data;
+  if (!(+d.amount > 0)) { toast("Сначала укажите сумму"); return openPayment(id); }
   const moneyId = uid();
   await guard(() => DB.save({ id: moneyId, type: "money", vis: "shared", data: { kind: "expense", amount: d.amount, date: iso(today()), cat: d.cat, note: d.title, payment_id: p.id, by: S.me.person } }, S.me));
   const data = { ...d, paid: { ...(d.paid || {}), [st.key]: { on: iso(today()), by: S.me.person, amount: d.amount, money_id: moneyId } } };
@@ -84,7 +86,7 @@ function paymentsWidget() {
   const ns = nextSalary();
   const before = ns ? payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.paid && !x.st.ended && x.st.ds < ns) : [];
   return `<div class="w"><h4><button class="linkh" data-go="money">Платежи</button><span class="mono">${ns ? "до зарплаты " + fmtDate(ns) : ""}</span></h4>
-    ${list.map(({ p, st }) => `<div class="payrow${st.overdue ? " over" : st.paid ? " paid" : ""}"><button class="pt" data-pay-open="${p.id}"><b>${esc(p.data.title)}</b><small>${rub(p.data.amount)} · ${dueLabel(st)}</small></button>
+    ${list.map(({ p, st }) => `<div class="payrow${st.overdue ? " over" : st.paid ? " paid" : ""}"><button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${dueLabel(st)}</small></button>
       ${st.paid ? `<span class="okmark">✓</span>` : `<button class="btn sm" data-pay="${p.id}">Оплатить</button>`}</div>`).join("") || '<span class="note">Ближайшие две недели без платежей</span>'}
     ${ns ? `<span class="note">До зарплаты осталось оплатить: ${before.length} на ${rub(before.reduce((s, x) => s + (+x.p.data.amount || 0), 0))}</span>` : ""}</div>`;
 }
@@ -119,7 +121,7 @@ function renderMoney(main) {
       <div class="panel"><h2>Обязательные платежи <button class="btn" data-new-pay>+ Платёж</button></h2>
         ${ns ? `<div class="alert info"><span>До зарплаты ${fmtDate(ns)}: ${before.length} ${plural(before.length, "платёж", "платежа", "платежей")} на ${rub(before.reduce((s, x) => s + +x.p.data.amount, 0))}</span></div>` : ""}
         ${pays.map(({ p, st }) => `<div class="prow${st.overdue ? " over" : st.paid || st.settled ? " paid" : st.soon ? " soon" : ""}" style="--c:${mcat(p.data.cat).c}">
-          <button class="pt" data-pay-open="${p.id}"><b>${esc(p.data.title)}</b><small>${rub(p.data.amount)} · ${p.data.kind === "monthly" ? `каждое ${p.data.day} число` : p.data.kind === "yearly" ? "раз в год" : "разово"} · ${dueLabel(st)}${p.data.payer && p.data.payer !== "any" ? ` · платит ${pn(p.data.payer)}` : ""}</small>
+          <button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${p.data.kind === "monthly" ? `каждое ${p.data.day} число` : p.data.kind === "yearly" ? "раз в год" : "разово"} · ${dueLabel(st)}${p.data.payer && p.data.payer !== "any" ? ` · платит ${pn(p.data.payer)}` : ""}</small>
           ${p.data.debt ? `<small>остаток долга ${rub(p.data.debt)}</small>` : ""}${(() => { const k = st.paid ? st.key : st.settled ? st.prevKey : null, r = k && p.data.paid?.[k]; return r?.by ? `<small>оплатил${r.by === "luba" ? "а" : ""} ${pn(r.by)} ${fmtDate(r.on)}</small>` : ""; })()}</button>
           ${st.paid || st.settled ? `<button class="btn sm ok" data-unpay="${p.id}" data-key="${st.paid ? st.key : st.prevKey}" title="Снять отметку об оплате">✓ Оплачено</button>` : `<button class="btn sm primary" data-pay="${p.id}">Оплатить</button>`}</div>`).join("") || '<div class="empty">Добавьте кредит, кружки, коммуналку — и приложение будет напоминать о них заранее.</div>'}
         <span class="note">Напоминание появляется заранее (срок задаётся в платеже) и в день оплаты — здесь и на главном экране. В Telegram — после подключения бота.</span></div>
@@ -149,10 +151,10 @@ function bindMoney(root) {
 /* ----- окна ----- */
 function openPayment(id) {
   const p = id ? payments().find((x) => x.id === id) : null;
-  const F = { title: "", amount: "", kind: "monthly", day: today().getDate(), date: iso(today()), cat: "home", payer: "any", remind: 3, debt: "", end_date: "", note: "", ...(p ? p.data : {}) };
+  const F = { title: "", amount: "", kind: "monthly", day: today().getDate(), date: iso(today()), cat: "home", payer: "any", remind: 3, debt: "", end_date: "", note: "", urgent: false, ...(p ? p.data : {}) };
   const draw = () => openModal(`<div class="sheet-h"><button data-close>Отмена</button><b>${p ? "Платёж" : "Новый обязательный платёж"}</b><button class="go" data-save>Готово</button></div>
     <label class="field"><span>Название</span><input data-k="title" value="${esc(F.title)}" placeholder="Кредит, гимнастика, коммуналка" maxlength="80"></label>
-    <div class="frow"><label class="field"><span>Сумма, ₽</span><input data-k="amount" inputmode="decimal" value="${esc(F.amount)}" placeholder="4500"></label>
+    <div class="frow"><label class="field"><span>Сумма, ₽</span><input data-k="amount" inputmode="decimal" value="${esc(F.amount)}" placeholder="можно указать позже"></label>
       ${F.kind === "monthly" ? `<label class="field"><span>Число месяца</span><input data-k="day" type="number" min="1" max="31" value="${esc(F.day)}"></label>` : `<label class="field"><span>${F.kind === "yearly" ? "Дата (каждый год)" : "Дата"}</span><input type="date" data-k="date" value="${F.date || ""}"></label>`}</div>
     <div class="field"><span>Как часто</span>${choice("kind", [["monthly", "Каждый месяц"], ["yearly", "Раз в год"], ["once", "Один раз"]], F.kind)}</div>
     <div class="field"><span>Категория</span>${choice("cat", MCATS.map((c) => [c.k, c.n, c.c]), F.cat)}</div>
@@ -160,6 +162,7 @@ function openPayment(id) {
     <div class="frow"><label class="field"><span>Напомнить за, дней</span><input data-k="remind" type="number" min="0" max="30" value="${esc(F.remind)}"></label>
       <label class="field"><span>Последний платёж</span><input type="date" data-k="end_date" value="${F.end_date || ""}"></label></div>
     ${F.cat === "credit" ? `<label class="field"><span>Остаток долга, ₽</span><input data-k="debt" inputmode="decimal" value="${esc(F.debt || "")}" placeholder="по выписке банка"></label>` : ""}
+    ${toggleRow("urgent", F.urgent, "Срочно", "покажется красным вверху «Сегодня»")}
     <label class="field"><span>Заметка</span><textarea data-k="note" placeholder="Реквизиты, номер договора">${esc(F.note || "")}</textarea></label>
     ${p ? `<div class="field"><span>История оплат</span>${Object.entries(p.data.paid || {}).sort().reverse().slice(0, 12).map(([k, r]) => `<div class="setrow"><span>${k.length === 7 ? MONTHS[+k.slice(5) - 1] + " " + k.slice(0, 4) : k}</span><span class="muted mono">${rub(r.amount)} · ${pn(r.by)} · ${fmtDate(r.on)}</span></div>`).join("") || '<span class="note">Пока не оплачивали</span>'}</div>` : ""}
     <div class="sheet-foot"><span>${p ? '<button class="btn danger" data-del>Удалить</button>' : ""}</span><button class="btn primary" data-save>${p ? "Сохранить" : "Добавить"}</button></div>`, (m) => {
@@ -168,8 +171,8 @@ function openPayment(id) {
     $$("[data-save]", m).forEach((b) => (b.onclick = async () => {
       const amount = parseFloat(String(F.amount).replace(/\s/g, "").replace(",", "."));
       if (!F.title.trim()) return toast("Напишите название");
-      if (!(amount > 0)) return toast("Укажите сумму");
-      const data = { ...(p ? p.data : {}), title: F.title.trim(), amount, kind: F.kind, cat: F.cat, payer: F.payer, remind: Math.max(0, +F.remind || 0), end_date: F.end_date || "", note: (F.note || "").trim(), by: p ? p.data.by : S.me.person, paid: p ? p.data.paid || {} : {} };
+      if (String(F.amount).trim() && !(amount > 0)) return toast("Сумма указана неверно");
+      const data = { ...(p ? p.data : {}), title: F.title.trim(), amount: amount > 0 ? amount : "", urgent: !!F.urgent, kind: F.kind, cat: F.cat, payer: F.payer, remind: Math.max(0, +F.remind || 0), end_date: F.end_date || "", note: (F.note || "").trim(), by: p ? p.data.by : S.me.person, paid: p ? p.data.paid || {} : {} };
       if (F.kind === "monthly") { data.day = Math.min(31, Math.max(1, +F.day || 1)); delete data.date; } else { if (!F.date) return toast("Укажите дату"); data.date = F.date; delete data.day; }
       data.debt = F.cat === "credit" && F.debt ? parseFloat(String(F.debt).replace(/\s/g, "").replace(",", ".")) || "" : "";
       closeModal();
