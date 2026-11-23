@@ -29,34 +29,49 @@ function pillsWidget() {
 const pillBtn = (d, ds) => `<button class="pill${d.taken ? " taken" : ""}" data-pill="${d.p.id}" data-ds="${ds}" data-tm="${d.tm}"><span class="ic"></span><span class="nm">${esc(d.p.data.name)}<small>${d.tm} · ${esc(d.p.data.dose || "")}</small></span><i class="dot" style="background:${PEOPLE[d.p.data.who]?.c}"></i></button>`;
 
 /* ----- цикл ----- */
-// Люба: цикл 26–28 дней, месячные 5 дней. «Безопасные» — 3 дня сразу после месячных (её правило).
-const CYC_DEF = { min: 26, max: 28, plen: 5, safe: 3 };
+// Прогноз считается по истории отмеченных месячных (как «Здоровье» на iPhone):
+// средняя длина последних 6 циклов, овуляция — за 14 дней до следующих месячных,
+// фертильное окно — 5 дней до овуляции и день после, ПМС — 5 дней до месячных.
+// Если циклов меньше трёх — по настройкам. «Безопасные» — 3 дня после месячных (правило Любы).
+const CYC_DEF = { min: 26, max: 28, plen: 5, safe: 3, auto: true };
 const cycleItem = () => S.items.find((i) => i.type === "cycle");
 const addDs = (ds, n) => iso(addD(parse(ds), n));
+function cycleStats(ps, st) {
+  const lens = [];
+  for (let i = 1; i < ps.length; i++) lens.push(daysBetween(ps[i - 1].start, ps[i].start));
+  const recent = lens.filter((l) => l >= 18 && l <= 50).slice(-6);
+  if (st.auto !== false && recent.length >= 3) {
+    const avg = recent.reduce((s, x) => s + x, 0) / recent.length;
+    const sd = Math.sqrt(recent.reduce((s, x) => s + (x - avg) ** 2, 0) / recent.length);
+    return { avg: Math.round(avg), lo: Math.round(avg - sd), hi: Math.round(avg + sd), n: recent.length, min: Math.min(...recent), max: Math.max(...recent), fromHistory: true };
+  }
+  return { avg: Math.round((st.min + st.max) / 2), lo: st.min, hi: st.max, n: recent.length, min: st.min, max: st.max, fromHistory: false };
+}
 function cycleCalc() {
   const it = cycleItem(); if (!it) return null;
   const st = { ...CYC_DEF, ...(it.data.settings || {}) };
   const ps = [...(it.data.periods || [])].filter((p) => p.start).sort((a, b) => a.start.localeCompare(b.start));
   if (!ps.length) return { ps, empty: true, st };
-  const avg = Math.round((st.min + st.max) / 2);
+  const stats = cycleStats(ps, st), avg = stats.avg;
   const last = ps[ps.length - 1], tds = iso(today());
   const lastEnd = last.end || addDs(last.start, st.plen - 1);
   const open = !last.end && daysBetween(last.start, tds) + 1 <= 10;
-  const late = tds > addDs(last.start, st.max) ? daysBetween(addDs(last.start, st.max), tds) : 0;
-  const c = { ps, st, avg, last, lastEnd, open, late };
+  const late = tds > addDs(last.start, stats.hi) ? daysBetween(addDs(last.start, stats.hi), tds) : 0;
+  const c = { ps, st, stats, avg, last, lastEnd, open, late };
   c.cur = cycleAt(tds, c) || { start: last.start, n: 1, k: 0 };
   c.day = c.cur.n;
   const s0 = c.cur.start, pe = c.cur.k === 0 && c.cur.base === last.start ? daysBetween(s0, lastEnd) + 1 : st.plen;
+  const ov = addDs(s0, avg - 15);
   c.dates = {
-    next: [addDs(s0, st.min), addDs(s0, st.max)],
-    ov: [addDs(s0, st.min - 15), addDs(s0, st.max - 15)],
+    next: addDs(s0, avg), nextRange: [addDs(s0, stats.lo), addDs(s0, stats.hi)],
+    ov, fert: [addDs(ov, -5), addDs(ov, 1)],
     safe: [addDs(s0, pe), addDs(s0, pe + st.safe - 1)],
-    pms: addDs(s0, st.min - 5),
+    pms: addDs(s0, avg - 5),
   };
-  c.next = c.dates.next[0]; c.ov = c.dates.ov[0];
+  c.next = c.dates.next; c.ov = ov;
   return c;
 }
-// в каком цикле день и какой это день цикла: по отмеченным месячным, дальше — прогноз
+// в каком цикле день и какой это день цикла: по отмеченным месячным, дальше — прогноз по средней длине
 function cycleAt(ds, c) {
   const before = c.ps.filter((p) => p.start <= ds);
   if (!before.length) return null;
@@ -69,16 +84,14 @@ function cyclePhase(ds, c = cycleCalc()) {
   if (!c || c.empty) return null;
   for (const p of c.ps) { const end = p.end || addDs(p.start, c.st.plen - 1); if (ds >= p.start && ds <= end) return "period"; }
   const at = cycleAt(ds, c); if (!at) return null;
-  const st = c.st, n = at.n;
+  const st = c.st, n = at.n, len = at.len || c.avg;
   if (at.k > 0 && n <= st.plen) return "pred";
-  // окна в днях цикла: по фактической длине прошлого цикла или по 26–28 для прогноза
-  const lo = at.len || st.min, hi = at.len || st.max;
-  const ov = [lo - 14, hi - 14], fert = [lo - 19, hi - 13], pmsFrom = lo - 4;
+  const ovN = len - 14, fert = [ovN - 5, ovN + 1];
   const pe = at.end ? daysBetween(at.start, at.end) + 1 : st.plen;
   if (n > pe && n <= pe + st.safe) return n >= fert[0] ? "safe risk" : "safe";
-  if (n >= ov[0] && n <= ov[1]) return "ov";
+  if (n === ovN) return "ov";
   if (n >= fert[0] && n <= fert[1]) return "fert";
-  if (n >= pmsFrom) return "pms";
+  if (n >= len - 4) return "pms";
   return null;
 }
 const PHASE_N = { period: "месячные", pred: "месячные (прогноз)", fert: "фертильные дни", ov: "овуляция", pms: "ПМС", safe: "безопасные дни", "safe risk": "безопасные по правилу 3 дней, но могут совпасть с фертильным окном" };
@@ -86,11 +99,11 @@ const rangeTxt = (a, b) => (a === b ? fmtDate(a) : parse(a).getMonth() === parse
 function cycleSummary(c) {
   if (!c || c.empty) return { big: "Нет данных", sub: "Отметьте начало месячных" };
   const t = iso(today()), ph = cyclePhase(t, c);
-  const phase = ph ? PHASE_N[ph].split(" по ")[0] : c.day <= 14 ? "фолликулярная фаза" : "лютеиновая фаза";
-  const D = c.dates, left = daysBetween(t, D.next[0]);
+  const phase = ph ? PHASE_N[ph].split(" по ")[0] : c.day <= c.avg - 14 ? "фолликулярная фаза" : "лютеиновая фаза";
+  const D = c.dates, left = daysBetween(t, D.next);
   const lines = [];
-  lines.push(c.late ? `Задержка ${c.late} ${plural(c.late, "день", "дня", "дней")}` : `Месячные ~${rangeTxt(D.next[0], D.next[1])}${left > 0 ? `, через ${left} ${plural(left, "день", "дня", "дней")}` : ""}`);
-  lines.push(`Овуляция ~${rangeTxt(D.ov[0], D.ov[1])}`);
+  lines.push(c.late ? `Задержка ${c.late} ${plural(c.late, "день", "дня", "дней")}` : `Месячные ~${fmtDate(D.next)}${left > 0 ? `, через ${left} ${plural(left, "день", "дня", "дней")}` : ""} (может быть ${rangeTxt(D.nextRange[0], D.nextRange[1])})`);
+  lines.push(`Овуляция ~${fmtDate(D.ov)}, фертильные ${rangeTxt(D.fert[0], D.fert[1])}`);
   if (D.safe[1] >= t) lines.push(`Безопасные дни: ${rangeTxt(D.safe[0], D.safe[1])}`);
   lines.push(`ПМС с ~${fmtDate(D.pms)}`);
   return { big: `День ${c.day}`, sub: phase, lines, next: lines[0], ph };
@@ -106,7 +119,7 @@ function partnerHint(c) {
 function cycleWidget() {
   const c = cycleCalc(); if (!c) return "";
   const s = cycleSummary(c), isLuba = S.me.person === "luba";
-  const strip = c.empty ? "" : `<div class="cyc-strip">${Array.from({ length: c.st.max }, (_, i) => { const ds = addDs(c.cur.start, i); const ph = cyclePhase(ds, c) || ""; return `<i class="${ph}${ds === iso(today()) ? " now" : ""}" title="день ${i + 1}${ph ? ": " + PHASE_N[ph] : ""}"></i>`; }).join("")}</div>`;
+  const strip = c.empty ? "" : `<div class="cyc-strip">${Array.from({ length: c.avg }, (_, i) => { const ds = addDs(c.cur.start, i); const ph = cyclePhase(ds, c) || ""; return `<i class="${ph}${ds === iso(today()) ? " now" : ""}" title="день ${i + 1}${ph ? ": " + PHASE_N[ph] : ""}"></i>`; }).join("")}</div>`;
   return `<div class="w"><h4><button class="linkh" data-go="health" data-sub="cycle">Цикл Любы</button><span class="mono">${isLuba ? "видит и Женя" : "заносит Люба"}</span></h4>
     <div><div class="cyc-big">${s.big}</div><div class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">${esc(s.sub)}</div></div>
     ${strip}${(s.lines || []).map((l) => `<span class="note">${esc(l)}</span>`).join("")}
@@ -116,6 +129,24 @@ function cycleWidget() {
 function openCycleSettings() {
   const it = cycleItem(), d = it ? it.data : { periods: [], days: {} };
   const F = { ...CYC_DEF, ...(d.settings || {}) };
+  const draw = () => openModal(settingsHTML(), bindS);
+  const settingsHTML = () => `<div class="sheet-h"><button data-close>Отмена</button><b>Настройки цикла</b><button class="go" data-save>Готово</button></div>
+    ${toggleRow("auto", F.auto !== false, "Считать по моей истории", "средняя длина последних циклов; вручную — по полям ниже")}
+    <div class="frow"><label class="field"><span>Цикл от, дней</span><input data-k="min" type="number" min="20" max="40" value="${F.min}"></label><label class="field"><span>до, дней</span><input data-k="max" type="number" min="20" max="40" value="${F.max}"></label></div>
+    <div class="frow"><label class="field"><span>Месячные, дней</span><input data-k="plen" type="number" min="2" max="10" value="${F.plen}"></label><label class="field"><span>Безопасных дней после</span><input data-k="safe" type="number" min="0" max="7" value="${F.safe}"></label></div>
+    <span class="note">Овуляция — за 14 дней до следующих месячных, фертильное окно — 5 дней до неё и день после. ПМС — 5 дней до месячных.</span>
+    <div class="sheet-foot"><span></span><button class="btn primary" data-save>Сохранить</button></div>`;
+  const bindS = (m) => {
+    bindForm(m, F, draw);
+    $("[data-close]", m).onclick = closeModal;
+    $$("[data-save]", m).forEach((b) => (b.onclick = async () => {
+      const n = (k, lo, hi) => Math.min(hi, Math.max(lo, Math.round(+F[k] || CYC_DEF[k])));
+      let min = n("min", 20, 40), max = n("max", 20, 40); if (max < min) [min, max] = [max, min];
+      closeModal();
+      await saveCycle({ ...d, settings: { min, max, plen: n("plen", 2, 10), safe: n("safe", 0, 7), auto: F.auto !== false } }, "Настройки цикла сохранены");
+    }));
+  };
+  return draw();
   openModal(`<div class="sheet-h"><button data-close>Отмена</button><b>Настройки цикла</b><button class="go" data-save>Готово</button></div>
     <div class="frow"><label class="field"><span>Цикл от, дней</span><input data-k="min" type="number" min="20" max="40" value="${F.min}"></label><label class="field"><span>до, дней</span><input data-k="max" type="number" min="20" max="40" value="${F.max}"></label></div>
     <div class="frow"><label class="field"><span>Месячные, дней</span><input data-k="plen" type="number" min="2" max="10" value="${F.plen}"></label><label class="field"><span>Безопасных дней после</span><input data-k="safe" type="number" min="0" max="7" value="${F.safe}"></label></div>
@@ -221,7 +252,7 @@ function renderHealth(main) {
           <div class="cyc-grid">${grid}</div>
           <div class="legend"><span><i style="background:var(--luba)"></i>месячные</span><span><i style="box-shadow:0 0 0 1.5px var(--luba) inset"></i>прогноз</span><span><i style="background:color-mix(in srgb,var(--luba) 28%,transparent)"></i>фертильные</span><span><i style="box-shadow:0 0 0 2px var(--fg) inset"></i>овуляция</span><span><i style="background:color-mix(in srgb,var(--c-care) 32%,transparent)"></i>ПМС</span><span><i style="background:color-mix(in srgb,var(--we) 40%,transparent)"></i>безопасные</span><span><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--we) 40%,transparent) 0 3px,color-mix(in srgb,var(--luba) 28%,transparent) 3px 6px)"></i>безопасные, но рядом фертильное окно</span></div>
           ${isLuba ? `<span class="note">Нажмите на день: первый раз — начало месячных, второй (в течение 10 дней) — конец. На отмеченный день — самочувствие и заметка.</span><button class="btn primary" data-cyc-quick>${c.open ? "Месячные закончились сегодня" : "Начались месячные сегодня"}</button>` : ""}
-          <span class="note">Считаю по циклу ${c.st.min}–${c.st.max} дней и месячным ${c.st.plen} дней${isLuba ? ' (<button class="linkbtn" data-cyc-set>изменить</button>)' : ""}. «Безопасные» — ${c.st.safe} дня после месячных, как вы просили. Календарный способ не защищает надёжно: при цикле ${c.st.min} дней эти дни могут совпасть с фертильным окном — они помечены штриховкой.</span>`
+          <span class="note">${c.stats.fromHistory ? `Считаю по вашей истории: средний цикл ${c.avg} ${plural(c.avg, "день", "дня", "дней")} (последние ${c.stats.n} циклов были от ${c.stats.min} до ${c.stats.max} дней)` : `Считаю по циклу ${c.st.min}–${c.st.max} дней — отметьте ещё месячные, и прогноз пойдёт по вашей истории`}, месячные ${c.st.plen} ${plural(c.st.plen, "день", "дня", "дней")}${isLuba ? ' (<button class="linkbtn" data-cyc-set>изменить</button>)' : ""}. «Безопасные» — ${c.st.safe} дня после месячных, как вы просили. Календарный способ не защищает надёжно: если эти дни задевают фертильное окно, они помечены штриховкой.</span>`
           : isLuba ? `<span class="note">Отметьте начало последних месячных — приложение посчитает прогноз.</span><button class="btn primary" data-cyc-quick>Начались месячные сегодня</button>` : '<span class="note">Люба ещё не заполнила календарь.</span>'}
       </div>
     </div>`;
