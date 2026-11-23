@@ -4,4 +4,6 @@
 window.CONFIG = {
   SUPABASE_URL: "https://xdefcigttunyrwufpiwn.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_ILg4NlnO6v8_CnWHopL8JA_AqFNJY7g",
+  // имя Telegram-бота без @ (появится после создания бота в @BotFather)
+  BOT_USERNAME: "",
 };

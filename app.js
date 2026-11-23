@@ -225,6 +225,14 @@ function render() {
   ({ home: renderHome, tasks: renderTasks, sasha: renderSasha, more: renderMore, money: renderMoney, health: renderHealth, balance: renderBalance, lists: renderLists, cards: renderCards, docs: renderDocs, bdays: renderBdays })[S.tab](main);
   const bk = $("[data-tab-back]", main); if (bk) bk.onclick = () => go("more");
 }
+// привязка Telegram: утренняя сводка в 7:30, просьбы друг друга, задачи голосом
+function tgPanel() {
+  if (DB.demo) return '<span class="note">В демо-режиме Telegram не подключается.</span>';
+  const bot = window.CONFIG?.BOT_USERNAME;
+  if (!bot) return '<span class="note">Бот ещё не настроен.</span>';
+  return `${S.me.tg ? `<span class="note">Подключён ✓ Сводка приходит каждое утро в 7:30, просьбы — сразу. Голосовые и сообщения боту @${bot} попадают в планер.</span>` : '<span class="note">Подключите — и каждое утро в 7:30 будет приходить сводка дня, просьбы партнёра — сразу, а задачи можно наговаривать голосом.</span>'}
+    <button class="btn ${S.me.tg ? "" : "primary"}" data-tg-link>${S.me.tg ? "Переподключить" : "Подключить Telegram"}</button>`;
+}
 function go(tab, sub) {
   S.tab = tab; S.fab = false;
   if (tab === "lists") S.listOpen = null;
@@ -596,7 +604,7 @@ function renderSasha(main) {
   const ed = S.editLessons;
   main.innerHTML = `<div class="page-h"><h1>Саша</h1><span class="spacer"></span>
       <div class="arrows"><button class="icon-btn" data-sw="-1" aria-label="Прошлая неделя">‹</button><button class="pill-btn" data-sw="0">${rangeLabel(mon)}</button><button class="icon-btn" data-sw="1" aria-label="Следующая неделя">›</button></div></div>
-    <div class="grid2">
+    <div class="grid2 sasha-grid">
       <div class="panel"><h2>Неделя и кто отвозит</h2>${days}<span class="note">Отвозит и забирает можно поменять прямо здесь, только для этого дня. Для всех повторов откройте занятие.</span></div>
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
         <div class="panel"><h2>Уроки · 1Б-1 <button class="btn" id="edLes">${ed ? "Сохранить" : "Править"}</button></h2>
@@ -658,6 +666,7 @@ function renderMore(main) {
           <div class="setrow"><span>Вы вошли как</span><span><i class="dot" style="background:${PEOPLE[S.me.person].c}"></i> ${pn(S.me.person)}</span></div>
           <div class="setrow"><span>Режим</span><span class="muted">${DB.demo ? "демо, данные в этом браузере" : "общая база"}</span></div>
           <div class="setrow"><span></span><span style="display:flex;gap:6px">${DB.demo ? '<button class="btn ghost" id="reset">Сбросить демо</button>' : ""}<button class="btn" id="out">Выйти</button></span></div></div>
+        <div class="panel"><h2>Telegram</h2>${tgPanel()}</div>
         <div class="panel"><h2>Как поставить на телефон</h2>
           <span class="note">iPhone: откройте приложение в Safari → «Поделиться» → «На экран Домой». Mac: в Safari «Файл» → «Добавить в Dock».</span></div>
         <div class="panel"><h2>Скоро</h2><span class="note">Telegram-бот: напоминания о платежах, таблетках и кружках, утренняя сводка в 7:30, просьбы друг другу. Голосовое добавление дел. Подписка в календарь телефона. Подключаются после общей базы.</span></div>
@@ -665,6 +674,12 @@ function renderMore(main) {
     </div>`;
   const out = $("#out"); out.onclick = async () => { await DB.signOut(); location.reload(); };
   $$("[data-go]", main).forEach((b) => (b.onclick = () => go(b.dataset.go)));
+  const tgb = $("[data-tg-link]", main);
+  if (tgb) tgb.onclick = async () => {
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(12)), (x) => x.toString(16).padStart(2, "0")).join("");
+    try { await DB.tgCode(code); } catch (e) { return toast("Не получилось: " + (e.message || e)); }
+    location.href = `https://t.me/${window.CONFIG.BOT_USERNAME}?start=${code}`;
+  };
   const rs = $("#reset"); if (rs) rs.onclick = () => DB.reset();
   const be = $("#brEdit"); if (be) be.onclick = () => { S.editBreaks = br; render(); };
   const ba = $("#brAdd"); if (ba) ba.onclick = () => { const d = iso(today()); S.editBreaks.push({ title: "Каникулы", from: d, to: d }); render(); };

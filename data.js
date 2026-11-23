@@ -200,10 +200,11 @@ function supaDB() {
       const { data } = await sb.auth.getSession();
       const u = data.session?.user;
       if (!u) return null;
-      const p = ok(await sb.from("profiles").select("person,name").eq("id", u.id).maybeSingle());
-      return { id: u.id, email: u.email, person: p?.person || null };
+      const p = ok(await sb.from("profiles").select("*").eq("id", u.id).maybeSingle());
+      return { id: u.id, email: u.email, person: p?.person || null, tg: !!p?.tg_chat_id };
     },
     async signIn(email, password) { ok(await sb.auth.signInWithPassword({ email, password })); },
+    async tgCode(code) { const { data } = await sb.auth.getSession(); ok(await sb.from("profiles").update({ tg_code: code }).eq("id", data.session.user.id)); },
     async signOut() { await sb.auth.signOut(); },
     async load() { return ok(await sb.from("items").select("id,type,vis,created_by,data").order("created_at")); },
     async save(item) {
