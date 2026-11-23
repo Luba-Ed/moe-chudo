@@ -544,3 +544,37 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* сделанное событие и срочный платёж */
 .ev.done b { text-decoration: line-through; opacity: .55; }
 .urg { font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--warn); border-radius: 5px; padding: 1px 5px; vertical-align: 1px; }
+
+/* деньги: только платежи */
+.stats3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 700px) { .stats3 { grid-template-columns: 1fr; } }
+.stat small { font-size: 12px; }
+.paidrow { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.paidrow:last-child { border-bottom: 0; }
+.paidrow .mono { font-size: 11px; color: var(--muted); }
+.paidrow .pt { background: none; border: 0; padding: 0; text-align: left; color: inherit; min-width: 0; }
+.paidrow .pt b { display: block; font-weight: 500; font-size: 14px; }
+.paidrow .pt small { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.paidrow .sum { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.paidrow .undo { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; width: 30px; height: 30px; font-size: 14px; }
+.catrow span small { margin-left: 6px; font-size: 11px; }
+
+/* поездки и мероприятия на несколько дней — полоса */
+.wk-spans, .mo-spans { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px 6px; margin-bottom: 6px; grid-auto-flow: row dense; }
+.wk-spans { min-width: 770px; }
+.mo-spans { grid-column: 1 / -1; margin: 2px 0 0; gap: 2px 4px; }
+.span { grid-column: var(--s) / var(--e); display: flex; align-items: baseline; gap: 8px; min-width: 0; border: 0; text-align: left; color: var(--fg);
+  background: color-mix(in srgb, var(--c) 26%, var(--card-2)); border-left: 3px solid var(--c); border-radius: 8px; padding: 5px 9px; font-size: 12.5px; }
+.span b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.span small { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.span.cont-l { border-left-style: dashed; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.span.cont-r { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.mo-spans .span { padding: 2px 6px; font-size: 11px; border-radius: 6px; }
+.mo-spans .span small { display: none; }
+.today-spans { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 4px 0 2px; }
+.today-spans .span { font-size: 13px; }
+@media (max-width: 600px) {
+  .wk-spans { min-width: 0; grid-template-columns: 1fr; }
+  .wk-spans .span { grid-column: auto; }
+  .mo-spans .span b { font-size: 10px; }
+}

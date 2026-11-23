@@ -98,7 +98,7 @@ function extrasOn(ds) {
   const out = [], f = S.filter;
   payments().forEach((p) => { if (payDueOn(p, ds) && (f === "all" || f === "we" || p.data.payer === f || p.data.payer === "any" || (f === "sasha" && p.data.cat === "sasha"))) {
     const paid = !!p.data.paid?.[payKey(p, ds)];
-    out.push({ kind: "pay", id: p.id, title: `${p.data.title} · ${rub(p.data.amount)}`, short: `₽ ${p.data.title}`, paid, over: !paid && ds < iso(today()) });
+    out.push({ kind: "pay", id: p.id, title: +p.data.amount > 0 ? `${p.data.title} · ${rub(p.data.amount)}` : p.data.title, short: `₽ ${p.data.title}`, paid, over: !paid && ds < iso(today()) });
   } });
   if (f === "all" || f === "we") listItemsOn(ds).forEach(({ l, i }) => out.push({ kind: "list", id: l.id, title: i.t, short: i.t, paid: i.done }));
   docs().forEach((d) => { if (d.data.expires === ds) out.push({ kind: "doc", id: d.id, title: `Истекает: ${d.data.title}`, short: `Срок: ${d.data.title}` }); });
@@ -203,9 +203,9 @@ function go(tab, sub) {
   render(); window.scrollTo(0, 0);
 }
 function fabItems() {
-  const base = [["event", "Событие"], ["task", "Задача"], ["sasha", "Занятие Саши"], ["expense", "Расход"]];
+  const base = [["event", "Событие"], ["task", "Задача"], ["sasha", "Занятие Саши"], ["payment", "Платёж"]];
   return ({
-    money: [["expense", "Расход"], ["income", "Доход"], ["payment", "Обязательный платёж"]],
+    money: [["payment", "Платёж"]],
     health: [["pill", "Таблетка или витамин"]], balance: [["witem", "Дело в колесо"], ["goal", "Цель"]],
     lists: [["list", "Список"]], cards: [["card", "Карта"]], docs: [["doc", "Документ"]],
   })[S.tab] || base;
@@ -279,11 +279,29 @@ const evDone = (o) => (o.done_dates || []).includes(o.ds);
 const evBtn = (o) => `<button class="ev${needsPick(o) ? " warn" : ""}${evDone(o) ? " done" : ""}${o.item.vis === "private" ? " private" : ""}" style="--c:${catC(o.cat)}" data-ev="${o.item.id}" data-ds="${o.ds}">
   <span class="tx"><span>${esc(timeLabel(o))}</span><b>${esc(o.title)}</b>${logiText(o, true) ? `<small>${esc(logiText(o, true))}</small>` : ""}</span>${whoDots(o)}</button>`;
 
+// события на несколько дней (поездки, мероприятия) рисуем одной полосой через все их дни
+const isSpan = (o) => !!(o.all_day && o.end_date && o.end_date > o.date && !(o.repeat && o.repeat.days?.length));
+function spansIn(days) {
+  const from = days[0], to = days[days.length - 1];
+  return events().filter((e) => isSpan(e.data) && e.data.date <= to && e.data.end_date >= from)
+    .map((e) => occ(e, e.data.date < from ? from : e.data.date)).filter(passFilter)
+    .sort((a, b) => a.item.data.date.localeCompare(b.item.data.date));
+}
+const spanDates = (o) => { const a = parse(o.item.data.date), b = parse(o.item.data.end_date);
+  return a.getMonth() === b.getMonth() ? `${a.getDate()}–${b.getDate()} ${MGEN[b.getMonth()]}` : `${a.getDate()} ${MGEN[a.getMonth()]} – ${b.getDate()} ${MGEN[b.getMonth()]}`; };
+function spansRow(days, cls = "wk-spans") {
+  const list = spansIn(days); if (!list.length) return "";
+  return `<div class="${cls}">${list.map((o) => {
+    const d = o.item.data, s = Math.max(0, days.indexOf(d.date < days[0] ? days[0] : d.date)), last = d.end_date > days[days.length - 1] ? days.length - 1 : days.indexOf(d.end_date);
+    return `<button class="span${d.date < days[0] ? " cont-l" : ""}${d.end_date > days[days.length - 1] ? " cont-r" : ""}" style="--s:${s + 1};--e:${last + 2};--c:${PEOPLE[d.who]?.c || catC(d.cat)}" data-ev="${o.item.id}" data-ds="${o.ds}" title="${esc(d.title)} · ${spanDates(o)}">
+      <b>${esc(d.title)}</b><small>${spanDates(o)}</small></button>`; }).join("")}</div>`;
+}
 function weekHTML() {
   const m = mondayOf(S.cursor), t = iso(today()), sel = iso(S.sel);
-  let h = '<div class="cal-scroll"><div class="wk">';
+  const days = Array.from({ length: 7 }, (_, i) => iso(addD(m, i)));
+  let h = `<div class="cal-scroll">${spansRow(days)}<div class="wk">`;
   for (let i = 0; i < 7; i++) {
-    const d = addD(m, i), ds = iso(d), evs = eventsOn(ds), br = inBreak(ds);
+    const d = addD(m, i), ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), br = inBreak(ds);
     const cph = showCycle() ? cyclePhase(ds) : null;
     h += `<div class="wk-day${ds === t ? " today" : ""}${ds === sel ? " sel" : ""}" data-day="${ds}" role="button" tabindex="0" aria-label="${fmtLong(ds)}">
       <span class="dn">${WDS[i]}<b>${d.getDate()}</b>${cph ? `<i class="cdot ${cph}" title="${PHASE_N[cph]}"></i>` : ""}</span>${br ? `<span class="brk">${esc(br.title)}</span>` : ""}
@@ -299,7 +317,8 @@ function monthHTML() {
   const cells = Math.ceil((wd(first) + new Date(y, mo + 1, 0).getDate()) / 7) * 7;
   for (let i = 0; i < cells; i++) {
     const d = addD(start, i);
-    const ds = iso(d), evs = eventsOn(ds), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : "var(--we)", warn: x.over, paid: x.paid }))];
+    if (i % 7 === 0) h += spansRow(Array.from({ length: 7 }, (_, k) => iso(addD(start, i + k))), "mo-spans");
+    const ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : "var(--we)", warn: x.over, paid: x.paid }))];
     const cph = showCycle() ? cyclePhase(ds) : null;
     h += `<div class="mo-c${d.getMonth() !== mo ? " out" : ""}${ds === t ? " today" : ""}${ds === sel ? " sel" : ""}" data-day="${ds}" role="button" tabindex="0" aria-label="${fmtLong(ds)}">
       <span class="n"><b>${d.getDate()}</b>${cph ? `<i class="cdot ${cph}" title="${PHASE_N[cph]}"></i>` : ""}</span>${evs.some((o) => o.routine) ? '<div class="bandline"></div>' : ""}
@@ -352,7 +371,7 @@ function todayHTML() {
   const cols = [{ k: "important", n: "Важное" }, ...CATS];
   const colHTML = (c) => {
     const ct = ts.filter((t) => (c.k === "important" ? t.data.important : !t.data.important && t.data.cat === c.k));
-    const ce = c.k === "important" ? [] : evs.filter((o) => o.cat === c.k);
+    const ce = c.k === "important" ? [] : evs.filter((o) => o.cat === c.k && !isSpan(o));
     const cp = c.k === "important" ? payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.paid && !x.st.ended && (x.st.ds === ds || (isT && x.st.overdue))) : [];
     const n = ct.filter((t) => t.data.status === "done").length;
     const total = ct.length + cp.length;
@@ -374,7 +393,7 @@ function todayHTML() {
   const urgent = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => x.p.data.urgent && !x.st.paid && !x.st.ended);
   const docAl = docExpiring(30);
   const pct = ts.length ? Math.round((done / ts.length) * 100) : 0;
-  return `<div class="today-h"><span class="d">${fmtLong(ds)}</span><h2>${isT ? "Сегодня" : WDN[wd(S.sel)]}</h2>
+  return `<div class="today-h"><span class="d">${fmtLong(ds)}</span>${(() => { const sp = spansIn([ds]); return sp.length ? `<span class="today-spans">${sp.map((o) => `<button class="span" style="--c:${PEOPLE[o.item.data.who]?.c || catC(o.item.data.cat)}" data-ev="${o.item.id}" data-ds="${ds}"><b>${esc(o.item.data.title)}</b><small>${spanDates(o)}</small></button>`).join("")}</span>` : ""; })()}<h2>${isT ? "Сегодня" : WDN[wd(S.sel)]}</h2>
       <span class="st">задач ${ts.length} · сделано ${done} · осталось ${ts.length - done}</span>
       <span class="today-add"><button class="btn sm" data-addev="${ds}">+ Событие</button><button class="btn sm" data-addtask="${ds}">+ Задача</button></span>${isT ? "" : '<button class="back" data-nav-today>← вернуться к сегодня</button>'}</div>
     ${al.length || reqs.length || payAl.length || docAl.length || urgent.length ? `<div class="alerts">

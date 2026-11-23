@@ -63,82 +63,101 @@ function nextSalary() {
   return null;
 }
 
+const MPREP = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
 /* ----- действия ----- */
+// «Оплатить» — одно нажатие: платёж отмечается оплаченным и уходит из списка «к оплате»
 async function payNow(id) {
   const p = payments().find((x) => x.id === id); if (!p) return;
   const st = payStatus(p), d = p.data;
-  if (!(+d.amount > 0)) { toast("Сначала укажите сумму"); return openPayment(id); }
-  const moneyId = uid();
-  await guard(() => DB.save({ id: moneyId, type: "money", vis: "shared", data: { kind: "expense", amount: d.amount, date: iso(today()), cat: d.cat, note: d.title, payment_id: p.id, by: S.me.person } }, S.me));
-  const data = { ...d, paid: { ...(d.paid || {}), [st.key]: { on: iso(today()), by: S.me.person, amount: d.amount, money_id: moneyId } } };
-  await saveItem({ ...p, data }, `${d.title}: оплачено ${rub(d.amount)}`);
+  const data = { ...d, paid: { ...(d.paid || {}), [st.key]: { on: iso(today()), by: S.me.person, amount: +d.amount || 0 } } };
+  await saveItem({ ...p, data }, `${d.title}: оплачено`);
 }
 async function unpay(id, key) {
   const p = payments().find((x) => x.id === id); if (!p) return;
   const rec = p.data.paid?.[key]; const paid = { ...(p.data.paid || {}) }; delete paid[key];
-  if (rec?.money_id) await guard(() => DB.remove(rec.money_id));
+  if (rec?.money_id) await guard(() => DB.remove(rec.money_id)); // запись из старой версии с доходами/расходами
   await saveItem({ ...p, data: { ...p.data, paid } }, "Отметка об оплате снята");
+}
+// что оплачено в месяце: для статистики по категориям
+function paidInMonth(mk) {
+  const out = [];
+  payments().forEach((p) => Object.entries(p.data.paid || {}).forEach(([key, r]) => {
+    if ((r.on || "").startsWith(mk)) out.push({ p, key, r, amount: +r.amount || +p.data.amount || 0 });
+  }));
+  return out.sort((a, b) => (b.r.on || "").localeCompare(a.r.on || ""));
+}
+// что ещё надо оплатить в месяце
+function dueInMonth(y, m) {
+  const mk = `${y}-${pad(m + 1)}`, out = [];
+  payments().forEach((p) => {
+    const ds = payDueIn(p, y, m);
+    if (!ds || !ds.startsWith(mk) || !payActive(p, ds)) return;
+    if (p.data.paid?.[payKey(p, ds)]) return;
+    out.push({ p, ds });
+  });
+  return out;
 }
 
 /* ----- виджет для главного экрана ----- */
 function paymentsWidget() {
-  const list = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.settled && (x.st.overdue || x.st.left <= 14)).sort((a, b) => a.st.ds.localeCompare(b.st.ds)).slice(0, 5);
+  const list = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.paid && !x.st.settled && (x.st.overdue || x.st.left <= 14)).sort((a, b) => a.st.ds.localeCompare(b.st.ds)).slice(0, 5);
   const ns = nextSalary();
-  const before = ns ? payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.paid && !x.st.ended && x.st.ds < ns) : [];
+  const before = ns ? payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.paid && !x.st.settled && !x.st.ended && x.st.ds < ns) : [];
   return `<div class="w"><h4><button class="linkh" data-go="money">Платежи</button><span class="mono">${ns ? "до зарплаты " + fmtDate(ns) : ""}</span></h4>
-    ${list.map(({ p, st }) => `<div class="payrow${st.overdue ? " over" : st.paid ? " paid" : ""}"><button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${dueLabel(st)}</small></button>
-      ${st.paid ? `<span class="okmark">✓</span>` : `<button class="btn sm" data-pay="${p.id}">Оплатить</button>`}</div>`).join("") || '<span class="note">Ближайшие две недели без платежей</span>'}
-    ${ns ? `<span class="note">До зарплаты осталось оплатить: ${before.length} на ${rub(before.reduce((s, x) => s + (+x.p.data.amount || 0), 0))}</span>` : ""}</div>`;
+    ${list.map(({ p, st }) => `<div class="payrow${st.overdue ? " over" : ""}"><button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${dueLabel(st)}</small></button>
+      <button class="btn sm" data-pay="${p.id}">Оплатить</button></div>`).join("") || '<span class="note">Ближайшие две недели всё оплачено</span>'}
+    ${ns && before.length ? `<span class="note">До зарплаты осталось оплатить: ${before.length}${(() => { const sum = before.reduce((s, x) => s + (+x.p.data.amount || 0), 0); return sum ? " на " + rub(sum) : ""; })()}</span>` : ""}</div>`;
 }
 
 /* ----- страница ----- */
 function renderMoney(main) {
   if (!S.mmonth) S.mmonth = new Date(today().getFullYear(), today().getMonth(), 1);
   const y = S.mmonth.getFullYear(), m = S.mmonth.getMonth(), mk = `${y}-${pad(m + 1)}`;
-  const ops = moneyOps().filter((o) => (o.data.date || "").startsWith(mk)).sort((a, b) => b.data.date.localeCompare(a.data.date));
-  const inc = ops.filter((o) => o.data.kind === "income").reduce((s, o) => s + +o.data.amount, 0);
-  const exp = ops.filter((o) => o.data.kind === "expense").reduce((s, o) => s + +o.data.amount, 0);
-  const pays = payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended).sort((a, b) => ((a.st.paid || a.st.settled) - (b.st.paid || b.st.settled)) || a.st.ds.localeCompare(b.st.ds));
-  const monthly = payments().filter((p) => p.data.kind === "monthly" && payActive(p, `${mk}-28`));
-  const mTotal = monthly.reduce((s, p) => s + +p.data.amount, 0);
-  const mPaid = monthly.filter((p) => p.data.paid?.[mk]).reduce((s, p) => s + +(p.data.paid[mk].amount || p.data.amount), 0);
+  const isCur = mk === iso(today()).slice(0, 7);
+  const paid = paidInMonth(mk), total = paid.reduce((s, x) => s + x.amount, 0);
+  const due = dueInMonth(y, m), dueSum = due.reduce((s, x) => s + (+x.p.data.amount || 0), 0);
+  // к оплате: в текущем месяце — всё неоплаченное (включая просроченное и ближайшее), в другом — то, что на этот месяц
+  const toPay = isCur
+    ? payments().map((p) => ({ p, st: payStatus(p) })).filter((x) => !x.st.ended && !x.st.paid && !x.st.settled).sort((a, b) => a.st.ds.localeCompare(b.st.ds))
+    : due.map(({ p, ds }) => ({ p, st: { ds, left: daysBetween(iso(today()), ds), overdue: ds < iso(today()), soon: false, paid: false } })).sort((a, b) => a.st.ds.localeCompare(b.st.ds));
   const limits = budget().limits || {};
-  const byCat = MCATS.map((c) => ({ c, sum: ops.filter((o) => o.data.kind === "expense" && o.data.cat === c.k).reduce((s, o) => s + +o.data.amount, 0), lim: +limits[c.k] || 0 })).filter((x) => x.sum || x.lim).sort((a, b) => b.sum - a.sum);
+  const byCat = MCATS.map((c) => ({ c, sum: paid.filter((x) => x.p.data.cat === c.k).reduce((s, x) => s + x.amount, 0), n: paid.filter((x) => x.p.data.cat === c.k).length, lim: +limits[c.k] || 0 })).filter((x) => x.sum || x.n || x.lim).sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => Math.max(x.sum, x.lim)));
   const ns = nextSalary();
-  const before = ns ? pays.filter((x) => !x.st.paid && !x.st.settled && x.st.ds < ns) : [];
+  const before = ns ? toPay.filter((x) => x.st.ds < ns) : [];
   const credits = payments().filter((p) => p.data.debt);
+  const noSum = paid.filter((x) => !x.amount).length;
   main.innerHTML = `<div class="page-h">${mobBack()}<h1>Деньги</h1><span class="spacer"></span>
       <div class="arrows"><button class="icon-btn" data-mm="-1" aria-label="Прошлый месяц">‹</button><button class="pill-btn" data-mm="0">${MONTHS[m]} ${y}</button><button class="icon-btn" data-mm="1" aria-label="Следующий месяц">›</button></div>
       <button class="pill-btn" id="budgetSet">Настроить</button></div>
-    <div class="stats">
-      <div class="stat"><span>Доходы</span><b>${rub(inc)}</b></div>
-      <div class="stat"><span>Расходы</span><b>${rub(exp)}</b></div>
-      <div class="stat"><span>Остаток</span><b class="${inc - exp < 0 ? "neg" : ""}">${rub(inc - exp)}</b></div>
-      <div class="stat"><span>Обязательные за месяц</span><b>${rub(mPaid)} <small>из ${rub(mTotal)}</small></b><div class="bar"><i style="width:${mTotal ? Math.min(100, (mPaid / mTotal) * 100) : 0}%;background:var(--we)"></i></div></div>
+    <div class="stats stats3">
+      <div class="stat"><span>Оплачено за ${MONTHS[m].toLowerCase()}</span><b>${rub(total)}</b><small class="muted">${paid.length} ${plural(paid.length, "платёж", "платежа", "платежей")}${noSum ? ` · ${noSum} без суммы` : ""}</small></div>
+      <div class="stat"><span>Ещё оплатить в ${MPREP[m]}</span><b>${rub(dueSum)}</b><small class="muted">${due.length} ${plural(due.length, "платёж", "платежа", "платежей")}</small></div>
+      <div class="stat"><span>Всего за месяц</span><b>${rub(total + dueSum)}</b><div class="bar"><i style="width:${total + dueSum ? Math.min(100, (total / (total + dueSum)) * 100) : 0}%;background:var(--we)"></i></div></div>
     </div>
     <div class="grid2">
-      <div class="panel"><h2>Обязательные платежи <button class="btn" data-new-pay>+ Платёж</button></h2>
-        ${ns ? `<div class="alert info"><span>До зарплаты ${fmtDate(ns)}: ${before.length} ${plural(before.length, "платёж", "платежа", "платежей")} на ${rub(before.reduce((s, x) => s + +x.p.data.amount, 0))}</span></div>` : ""}
-        ${pays.map(({ p, st }) => `<div class="prow${st.overdue ? " over" : st.paid || st.settled ? " paid" : st.soon ? " soon" : ""}" style="--c:${mcat(p.data.cat).c}">
-          <button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${p.data.kind === "monthly" ? `каждое ${p.data.day} число` : p.data.kind === "yearly" ? "раз в год" : "разово"} · ${dueLabel(st)}${p.data.payer && p.data.payer !== "any" ? ` · платит ${pn(p.data.payer)}` : ""}</small>
-          ${p.data.debt ? `<small>остаток долга ${rub(p.data.debt)}</small>` : ""}${(() => { const k = st.paid ? st.key : st.settled ? st.prevKey : null, r = k && p.data.paid?.[k]; return r?.by ? `<small>оплатил${r.by === "luba" ? "а" : ""} ${pn(r.by)} ${fmtDate(r.on)}</small>` : ""; })()}</button>
-          ${st.paid || st.settled ? `<button class="btn sm ok" data-unpay="${p.id}" data-key="${st.paid ? st.key : st.prevKey}" title="Снять отметку об оплате">✓ Оплачено</button>` : `<button class="btn sm primary" data-pay="${p.id}">Оплатить</button>`}</div>`).join("") || '<div class="empty">Добавьте кредит, кружки, коммуналку — и приложение будет напоминать о них заранее.</div>'}
-        <span class="note">Напоминание появляется заранее (срок задаётся в платеже) и в день оплаты — здесь и на главном экране. В Telegram — после подключения бота.</span></div>
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
-        <div class="panel"><h2>Расходы по категориям</h2>
-          ${byCat.map((x) => `<div class="catrow"><span><i class="dot" style="background:${x.c.c}"></i>${x.c.n}</span><b>${rub(x.sum)}${x.lim ? `<small> из ${rub(x.lim)}</small>` : ""}</b>
-            <div class="bar"><i style="width:${(x.sum / maxCat) * 100}%;background:${x.lim && x.sum > x.lim ? "var(--warn)" : x.c.c}"></i>${x.lim ? `<em style="left:${(x.lim / maxCat) * 100}%"></em>` : ""}</div></div>`).join("") || '<span class="note">В этом месяце расходов пока нет</span>'}</div>
+        <div class="panel"><h2>К оплате <button class="btn" data-new-pay>+ Платёж</button></h2>
+          ${isCur && ns && before.length ? `<div class="alert info"><span>До зарплаты ${fmtDate(ns)}: ${before.length} ${plural(before.length, "платёж", "платежа", "платежей")}${(() => { const sum = before.reduce((s, x) => s + (+x.p.data.amount || 0), 0); return sum ? " на " + rub(sum) : ""; })()}</span></div>` : ""}
+          ${toPay.map(({ p, st }) => `<div class="prow${st.overdue ? " over" : st.soon ? " soon" : ""}" style="--c:${mcat(p.data.cat).c}">
+            <button class="pt" data-pay-open="${p.id}"><b>${p.data.urgent ? '<em class="urg">срочно</em> ' : ""}${esc(p.data.title)}</b><small>${payAmt(p)} · ${p.data.kind === "monthly" ? `каждое ${p.data.day} число` : p.data.kind === "yearly" ? "раз в год" : "разово"} · ${dueLabel(st)}${p.data.payer && p.data.payer !== "any" ? ` · платит ${pn(p.data.payer)}` : ""}</small>
+            ${p.data.debt ? `<small>остаток долга ${rub(p.data.debt)}</small>` : ""}</button>
+            <button class="btn sm primary" data-pay="${p.id}">Оплатить</button></div>`).join("") || '<div class="empty">Всё оплачено</div>'}
+          <span class="note">Нажали «Оплатить» — платёж уходит в «Оплачено». Ежемесячный вернётся сюда к следующему сроку сам.</span></div>
+        <div class="panel"><h2>Оплачено в ${MPREP[m]}</h2>
+          ${paid.map(({ p, key, r, amount }) => `<div class="paidrow"><span class="mono">${fmtDate(r.on).replace(" ", "&nbsp;")}</span><button class="pt" data-pay-open="${p.id}"><b>${esc(p.data.title)}</b><small><i class="dot" style="background:${mcat(p.data.cat).c}"></i> ${mcat(p.data.cat).n}${r.by ? ` · ${pn(r.by)}` : ""}</small></button>
+            <b class="sum">${amount ? rub(amount) : '<span class="muted">—</span>'}</b><button class="undo" data-unpay="${p.id}" data-key="${key}" title="Снять отметку об оплате" aria-label="Снять отметку об оплате">↩</button></div>`).join("") || '<span class="note">Пока ничего не оплачено</span>'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+        <div class="panel"><h2>На что уходят деньги <span class="mono" style="font-size:16px">${rub(total)}</span></h2>
+          ${byCat.map((x) => `<div class="catrow"><span><i class="dot" style="background:${x.c.c}"></i>${x.c.n}<small class="muted mono">${total ? Math.round((x.sum / total) * 100) + "%" : ""}</small></span><b>${rub(x.sum)}${x.lim ? `<small> из ${rub(x.lim)}</small>` : ""}</b>
+            <div class="bar"><i style="width:${(x.sum / maxCat) * 100}%;background:${x.lim && x.sum > x.lim ? "var(--warn)" : x.c.c}"></i>${x.lim ? `<em style="left:${(x.lim / maxCat) * 100}%"></em>` : ""}</div></div>`).join("") || '<span class="note">Когда отметите платежи оплаченными, здесь появится разбивка по категориям.</span>'}
+          ${noSum ? `<span class="note">У ${noSum} ${plural(noSum, "платежа", "платежей", "платежей")} не указана сумма — их нет в итогах. Откройте платёж и впишите сумму.</span>` : ""}</div>
         ${credits.length ? `<div class="panel"><h2>Кредиты</h2>${credits.map((p) => `<div class="setrow"><span>${esc(p.data.title)}</span><span class="mono">${rub(p.data.debt)}${p.data.end_date ? ` · до ${fmtDate(p.data.end_date)}` : ""}</span></div>`).join("")}<span class="note">Остаток долга обновляйте по выписке банка в карточке платежа.</span></div>` : ""}
-        <div class="panel"><h2>Операции <span style="display:flex;gap:6px"><button class="btn" data-new-op="income">+ Доход</button><button class="btn primary" data-new-op="expense">+ Расход</button></span></h2>
-          ${ops.map((o) => { const d = o.data, c = d.kind === "income" ? null : mcat(d.cat);
-            return `<button class="oprow" data-op="${o.id}"><span class="mono">${fmtDate(d.date).replace(" ", "&nbsp;")}</span><span class="on">${esc(d.note || (c ? c.n : ICATS.find((i) => i.k === d.cat)?.n))}<small>${c ? `<i class="dot" style="background:${c.c}"></i> ${c.n}` : "доход"}${d.by ? ` · ${pn(d.by)}` : ""}</small></span><b class="${d.kind === "income" ? "pos" : ""}">${d.kind === "income" ? "+" : "−"}${rub(d.amount)}</b></button>`; }).join("") || '<span class="note">Операций в этом месяце нет</span>'}</div>
       </div>
     </div>`;
   $$("[data-mm]", main).forEach((b) => (b.onclick = () => { const n = +b.dataset.mm; S.mmonth = n === 0 ? new Date(today().getFullYear(), today().getMonth(), 1) : new Date(y, m + n, 1); render(); }));
   $("[data-new-pay]", main).onclick = () => openPayment(null);
-  $$("[data-new-op]", main).forEach((b) => (b.onclick = () => openMoney(null, { kind: b.dataset.newOp })));
-  $$("[data-op]", main).forEach((b) => (b.onclick = () => openMoney(b.dataset.op)));
   $("#budgetSet", main).onclick = openBudget;
   bindToday(main);
 }
