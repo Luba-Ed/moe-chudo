@@ -313,8 +313,12 @@ function logiText(o, short = false) {
   return o.drop ? (o.drop === "we" ? (short ? "отв вместе" : "отвозят вместе") : `${short ? "отв" : "отвозит"} ${pn(o.drop)}`) : "";
 }
 const evDone = (o) => (o.done_dates || []).includes(o.ds);
+// соревнования и выступления Саши: отметка в событии или слово в названии
+const CUP_SVG = '<svg class="cup" viewBox="0 0 24 24" aria-label="Соревнование"><path d="M7 4h10v5a5 5 0 0 1-10 0V4Z" fill="currentColor"/><path d="M7 6H4.5v1.5A3 3 0 0 0 7.5 10.5M17 6h2.5v1.5a3 3 0 0 1-3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 14v3.5M8.5 20.5h7M10 17.5h4v3h-4z" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+const isComp = (o) => o.competition === true || (o.competition !== false && /соревн|выступлен|турнир|конкурс|кубок|чемпионат|первенств/i.test(o.title || ""));
+const cupOf = (o) => (isComp(o) ? CUP_SVG : "");
 const evBtn = (o) => `<button class="ev${needsPick(o) ? " warn" : ""}${evDone(o) ? " done" : ""}${o.item.vis === "private" ? " private" : ""}" style="--c:${catC(o.cat)}" data-ev="${o.item.id}" data-ds="${o.ds}">
-  <span class="tx"><span>${esc(timeLabel(o))}</span><b>${esc(o.title)}</b>${logiText(o, true) ? `<small>${esc(logiText(o, true))}</small>` : ""}</span>${whoDots(o)}</button>`;
+  <span class="tx"><span>${esc(timeLabel(o))}</span><b>${cupOf(o)}${esc(o.title)}</b>${logiText(o, true) ? `<small>${esc(logiText(o, true))}</small>` : ""}</span>${whoDots(o)}</button>`;
 
 // события на несколько дней (поездки, мероприятия) рисуем одной полосой через все их дни
 const isSpan = (o) => !!(o.all_day && o.end_date && o.end_date > o.date && !(o.repeat && o.repeat.days?.length));
@@ -355,11 +359,11 @@ function monthHTML() {
   for (let i = 0; i < cells; i++) {
     const d = addD(start, i);
     if (i % 7 === 0) h += spansRow(Array.from({ length: 7 }, (_, k) => iso(addD(start, i + k))), "mo-spans");
-    const ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : x.kind === "bday" ? "var(--sasha)" : "var(--we)", warn: x.over, paid: x.paid }))];
+    const ds = iso(d), evs = eventsOn(ds).filter((o) => !isSpan(o)), ex = extrasOn(ds), main = [...evs.filter((o) => !o.routine).map((o) => ({ title: o.title, c: catC(o.cat), warn: needsPick(o), cup: isComp(o) })), ...ex.map((x) => ({ title: x.short, c: x.kind === "pay" ? "var(--babushka)" : x.kind === "bday" ? "var(--sasha)" : "var(--we)", warn: x.over, paid: x.paid }))];
     const cph = showCycle() ? cyclePhase(ds) : null;
     h += `<div class="mo-c${d.getMonth() !== mo ? " out" : ""}${ds === t ? " today" : ""}${ds === sel ? " sel" : ""}" data-day="${ds}" role="button" tabindex="0" aria-label="${fmtLong(ds)}">
       <span class="n"><b>${d.getDate()}</b>${cph ? `<i class="cdot ${cph}" title="${PHASE_N[cph]}"></i>` : ""}</span>${evs.some((o) => o.routine) ? '<div class="bandline"></div>' : ""}
-      ${main.slice(0, 3).map((o) => `<span class="chip${o.warn ? " warn" : ""}${o.paid ? " paid" : ""}" style="--c:${o.c}">${esc(o.title)}</span>`).join("")}
+      ${main.slice(0, 3).map((o) => `<span class="chip${o.warn ? " warn" : ""}${o.paid ? " paid" : ""}" style="--c:${o.c}">${o.cup ? CUP_SVG : ""}${esc(o.title)}</span>`).join("")}
       ${main.length > 3 ? `<span class="more">ещё ${main.length - 3}</span>` : ""}</div>`;
   }
   return h + "</div>";
@@ -417,7 +421,7 @@ function todayHTML() {
       <h3>${c.n}<span>${n}/${total}</span></h3>${c.k !== "important" ? '<div class="stripe"></div>' : ""}
       ${cp.map(({ p, st }) => `<div class="trow${st.overdue ? " over" : ""}"><span class="rub">₽</span><button class="tt" data-pay-open="${p.id}"><span>${esc(p.data.title)} · ${payAmt(p)}</span><small>${p.data.urgent ? "срочно · " : ""}${st.overdue ? "просрочено с " + fmtDate(st.ds) : "оплатить сегодня"}</small></button><button class="paybtn" data-pay="${p.id}">Оплатить</button></div>`).join("")}
       ${ce.map((o) => o.wheel || o.task_id ? `<div class="trow${(o.done_dates || []).includes(o.ds) ? " done" : ""}"><button class="ck${(o.done_dates || []).includes(o.ds) ? " on" : ""}" data-evdone="${o.item.id}" data-ds="${o.ds}" aria-label="Сделано"></button><button class="tt" data-ev="${o.item.id}" data-ds="${o.ds}"><span>${esc(o.title)}</span><small>${esc([o.all_day ? "в течение дня" : o.start || "", o.wheel ? "колесо" : "событие"].filter(Boolean).join(" · "))}</small></button><i class="who" style="background:${PEOPLE[o.who]?.c}"></i></div>`
-        : `<button class="erow" data-ev="${o.item.id}" data-ds="${o.ds}"><span class="t">${esc(o.all_day ? "день" : o.start || "")}</span><span>${esc(o.title)}${logiText(o) ? ` · ${esc(logiText(o))}` : ""}</span></button>`).join("")}
+        : `<button class="erow" data-ev="${o.item.id}" data-ds="${o.ds}"><span class="t">${esc(o.all_day ? "день" : o.start || "")}</span><span>${cupOf(o)}${esc(o.title)}${logiText(o) ? ` · ${esc(logiText(o))}` : ""}</span></button>`).join("")}
       ${ct.map((t) => { const d = t.data, over = d.due && d.due < ds && d.status !== "done";
         // в «Важном» подписываем, из какого списка задача и до какого числа
         const sh = c.k === "important" ? [kindName(d.kind), catName(d.cat), over ? `было ${fmtDate(d.due)}` : d.due && d.due !== ds ? `до ${fmtDate(d.due)}` : taskShort(t, ds)].filter(Boolean).join(" · ") : [kindName(d.kind), taskShort(t, ds)].filter(Boolean).join(" · ");
@@ -602,8 +606,13 @@ function renderSasha(main) {
   const up = [];
   for (let i = 0; i < 45; i++) { const ds = iso(addD(today(), i)); eventsOn(ds, true).filter((o) => isSasha(o) && !o.routine && !(o.item.data.repeat?.days?.length)).forEach((o) => up.push(o)); }
   const ed = S.editLessons;
+  let comp = null;
+  for (let i = 0; i < 366 && !comp; i++) { const ds = iso(addD(today(), i)); comp = eventsOn(ds, true).find((o) => isSasha(o) && isComp(o)) || null; }
+  const inDays = (n) => (n === 0 ? "сегодня" : n === 1 ? "завтра" : `через ${n} ${n % 10 === 1 && n % 100 !== 11 ? "день" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "дня" : "дней"}`);
+  const compRow = `<div class="comp-row">${CUP_SVG}<span class="lbl">Ближайшее соревнование</span>${comp ? `<button class="tt" data-ev="${comp.item.id}" data-ds="${comp.ds}"><b>${esc(comp.title)}</b><small>${esc(fmtLong(comp.ds))}${comp.start ? " · " + esc(comp.start) : ""} · ${inDays(Math.round((parse(comp.ds) - parse(iso(today()))) / 864e5))}</small></button>` : '<span class="note">пока не запланировано — отметьте событие Саши как соревнование</span>'}</div>`;
   main.innerHTML = `<div class="page-h"><h1>Саша</h1><span class="spacer"></span>
       <div class="arrows"><button class="icon-btn" data-sw="-1" aria-label="Прошлая неделя">‹</button><button class="pill-btn" data-sw="0">${rangeLabel(mon)}</button><button class="icon-btn" data-sw="1" aria-label="Следующая неделя">›</button></div></div>
+    ${compRow}
     <div class="grid2 sasha-grid">
       <div class="panel"><h2>Неделя и кто отвозит</h2>${days}<span class="note">Отвозит и забирает можно поменять прямо здесь, только для этого дня. Для всех повторов откройте занятие.</span></div>
       <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
@@ -709,7 +718,7 @@ const toggle = (key, on, title, hint) => `<div class="switch"><span>${title}${hi
 function bindForm(m, F, rerender) {
   $$("[data-k]", m).forEach((el) => (el.oninput = el.onchange = () => (F[el.dataset.k] = el.value)));
   $$("[data-choice]", m).forEach((g) => $$("button", g).forEach((b) => (b.onclick = () => { F[g.dataset.choice] = b.dataset.v; rerender(); })));
-  $$("[data-tog]", m).forEach((b) => (b.onclick = () => { F[b.dataset.tog] = !F[b.dataset.tog]; rerender(); }));
+  $$("[data-tog]", m).forEach((b) => (b.onclick = () => { F[b.dataset.tog] = b.dataset.tog === "competition" ? !isComp(F) : !F[b.dataset.tog]; rerender(); }));
 }
 
 function openEvent(id, ds, preset = {}) {
@@ -746,6 +755,7 @@ function openEvent(id, ds, preset = {}) {
           <label class="switch"><span>До даты<small>пусто — без конца</small></span><input type="date" data-k="until" value="${F.until || ""}" style="background:var(--card-2);border:0;border-radius:8px;padding:6px 8px;max-width:160px"></label>
           ${toggle("skip_breaks", F.skip_breaks, "Пропускать каникулы и праздники")}
           ${toggle("routine", F.routine, "Распорядок", "показывать полоской, как школу")}` : ""}</div>
+      ${F.who === "sasha" ? `<div class="field">${toggle("competition", isComp(F), "Соревнование или выступление", "кубок в календаре и строчка «Ближайшее соревнование»")}</div>` : ""}
       ${F.who === "sasha" && !F.all_day ? `<div class="field" style="gap:10px"><span>Кто отвозит и забирает</span>
         <div class="frow"><label class="field" style="background:var(--card-2)"><span>Отвозит</span><select data-k="drop">${PICKS.map(([p, n]) => `<option value="${p}"${p === (F.drop || "") ? " selected" : ""}>${n}</option>`).join("")}</select></label>
           <label class="field" style="background:var(--card-2)"><span>Откуда</span><input data-k="from" value="${esc(F.from || "")}" placeholder="Школа"></label></div>
@@ -787,7 +797,7 @@ async function saveEvent(e, F, onlyDs, openDs) {
     start: F.all_day ? "" : F.start || "", end: F.all_day ? "" : F.end || "", end_date: F.all_day && F.end_date >= F.date ? F.end_date : "",
     note: (F.note || "").trim(), by: e ? e.data.by : me,
   };
-  if (F.who === "sasha") Object.assign(d, { drop: F.drop || "", pick: F.pick || "", from: F.from || "", to: F.to || "", no_pick: !!F.no_pick });
+  if (F.who === "sasha") Object.assign(d, { drop: F.drop || "", pick: F.pick || "", from: F.from || "", to: F.to || "", no_pick: !!F.no_pick, competition: isComp(F) });
   if (F.rep) Object.assign(d, { repeat: { days: F.days, until: F.until || null }, skip_breaks: !!F.skip_breaks, routine: !!F.routine, exceptions: e?.data.exceptions || [], overrides: { ...(e?.data.overrides || {}) } });
   if (openDs && d.overrides) delete d.overrides[openDs];
   const vis = F.who === me ? F.vis : "shared";
