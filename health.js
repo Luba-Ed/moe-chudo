@@ -124,7 +124,7 @@ function cycleWidget() {
     <div><div class="cyc-big">${s.big}</div><div class="mono muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">${esc(s.sub)}</div></div>
     ${strip}${(s.lines || []).map((l) => `<span class="note">${esc(l)}</span>`).join("")}
     ${!isLuba && partnerHint(c) ? `<span class="hint-card">${esc(partnerHint(c))}</span>` : ""}
-    ${isLuba ? `<button class="btn sm" data-cyc-quick>${c.open ? "Месячные закончились" : "Начались месячные"}</button>` : ""}</div>`;
+    ${isLuba ? (cyclePhase(iso(today()), c) === "period" ? `<span class="note">Идут месячные, день ${c.day} из ${c.st.plen}</span>` : '<button class="btn sm" data-cyc-quick>Начались месячные</button>') : ""}</div>`;
 }
 function openCycleSettings() {
   const it = cycleItem(), d = it ? it.data : { periods: [], days: {} };
@@ -188,33 +188,38 @@ async function saveCycle(data, msg) {
   if (S.me.person !== "luba") return toast("Цикл заносит только Люба");
   await saveItem(it ? { ...it, data } : { type: "cycle", vis: "visible", data: { periods: [], days: {}, ...data } }, msg);
 }
+// Отмечается только первый день месячных — остальные дни (по настройке, 5) добавляются сами.
+const periodEnd = (p, plen) => p.end || addDs(p.start, plen - 1);
+const cyclePlen = (d) => ({ ...CYC_DEF, ...(d.settings || {}) }).plen;
 async function cycleMark(ds) {
-  const it = cycleItem(), d = it ? it.data : { periods: [], days: {} };
+  const it = cycleItem(), d = it ? it.data : { periods: [], days: {} }, plen = cyclePlen(d);
   const ps = [...(d.periods || [])].sort((a, b) => a.start.localeCompare(b.start));
-  const inside = ps.find((p) => ds >= p.start && ds <= (p.end || p.start));
-  const openP = ps.find((p) => !p.end && daysBetween(p.start, ds) >= 0 && daysBetween(p.start, ds) <= 10);
-  let msg;
-  if (openP && ds > openP.start) { openP.end = ds; msg = `Месячные: ${fmtDate(openP.start)} – ${fmtDate(ds)}`; }
-  else if (inside) { return openCycleDay(ds); }
-  else { ps.push({ start: ds, end: "" }); msg = `Начало месячных: ${fmtDate(ds)}`; }
-  await saveCycle({ ...d, periods: ps }, msg);
+  const inside = ps.find((p) => ds >= p.start && ds <= periodEnd(p, plen));
+  const near = ps.find((p) => Math.abs(daysBetween(p.start, ds)) <= 10);
+  if (inside || near) return openCycleDay(ds); // рядом уже есть месячные — спросим, что сделать
+  ps.push({ start: ds, end: "" });
+  await saveCycle({ ...d, periods: ps }, `Месячные с ${fmtDate(ds)}, ${plen} ${plural(plen, "день", "дня", "дней")} отмечены`);
 }
 function openCycleDay(ds) {
   const it = cycleItem(), d = it ? it.data : { periods: [], days: {} };
   const isLuba = S.me.person === "luba";
   const F = { mood: "", pain: "", note: "", ...(d.days?.[ds] || {}) };
-  const per = (d.periods || []).find((p) => ds >= p.start && ds <= (p.end || p.start));
+  const plen = cyclePlen(d);
+  const per = (d.periods || []).find((p) => ds >= p.start && ds <= periodEnd(p, plen));
+  const near = !per && (d.periods || []).find((p) => Math.abs(daysBetween(p.start, ds)) <= 10);
   const draw = () => openModal(`<div class="sheet-h"><button data-close>${isLuba ? "Отмена" : "Закрыть"}</button><b>${fmtLong(ds)}</b>${isLuba ? '<button class="go" data-save>Готово</button>' : "<span></span>"}</div>
     <span class="note">${PHASE_N[cyclePhase(ds)] ? "Фаза: " + PHASE_N[cyclePhase(ds)] : "Обычный день цикла"}</span>
     <div class="field"><span>Самочувствие</span>${choice("mood", [["good", "Хорошо"], ["ok", "Нормально"], ["bad", "Плохо"]], F.mood)}</div>
     <div class="field"><span>Боль</span>${choice("pain", [["none", "Нет"], ["light", "Слабая"], ["strong", "Сильная"]], F.pain)}</div>
     <label class="field"><span>Заметка</span><textarea data-k="note" placeholder="Как прошёл день">${esc(F.note)}</textarea></label>
-    ${isLuba ? `<div class="sheet-foot"><span style="display:flex;gap:6px;flex-wrap:wrap">${per ? `<button class="btn danger" data-rm-period>Удалить месячные ${fmtDate(per.start)}</button>` : `<button class="btn" data-mark>Начало месячных</button>`}</span><button class="btn primary" data-save>Сохранить</button></div>` : ""}`, (m) => {
+    ${isLuba ? `<div class="sheet-foot"><span style="display:flex;gap:6px;flex-wrap:wrap">${per ? `${ds !== per.start ? '<button class="btn" data-end-here>Закончились в этот день</button>' : ""}<button class="btn danger" data-rm-period>Удалить месячные с ${fmtDate(per.start)}</button>` : near ? `<button class="btn" data-move-start>Начались в этот день, а не ${fmtDate(near.start)}</button>` : `<button class="btn" data-mark>Начались месячные</button>`}</span><button class="btn primary" data-save>Сохранить</button></div>` : ""}`, (m) => {
     bindForm(m, F, draw);
     $("[data-close]", m).onclick = closeModal;
     if (!isLuba) $$("input,textarea,.choice button", m).forEach((x) => (x.disabled = true));
     $$("[data-save]", m).forEach((b) => (b.onclick = async () => { const days = { ...(d.days || {}) }; if (F.mood || F.pain || F.note.trim()) days[ds] = { mood: F.mood, pain: F.pain, note: F.note.trim() }; else delete days[ds]; closeModal(); await saveCycle({ ...d, days }, "Сохранено"); }));
     const mk = $("[data-mark]", m); if (mk) mk.onclick = () => { closeModal(); cycleMark(ds); };
+    const eh = $("[data-end-here]", m); if (eh) eh.onclick = async () => { closeModal(); await saveCycle({ ...d, periods: d.periods.map((p) => (p === per ? { ...p, end: ds } : p)) }, `Месячные: ${fmtDate(per.start)} – ${fmtDate(ds)}`); };
+    const ms = $("[data-move-start]", m); if (ms) ms.onclick = async () => { closeModal(); await saveCycle({ ...d, periods: d.periods.map((p) => (p === near ? { start: ds, end: "" } : p)) }, `Начало месячных перенесено на ${fmtDate(ds)}`); };
     const rm = $("[data-rm-period]", m); if (rm) rm.onclick = async () => { if (rm.dataset.sure !== "1") { rm.dataset.sure = "1"; rm.textContent = "Точно удалить?"; return; } closeModal(); await saveCycle({ ...d, periods: d.periods.filter((p) => p !== per) }, "Удалено"); };
   });
   draw();
@@ -251,7 +256,7 @@ function renderHealth(main) {
           <div class="calbar" style="gap:8px"><b style="font-size:16px">${MONTHS[mo]} ${y}</b><span class="spacer"></span><div class="arrows"><button class="icon-btn" data-cm="-1" aria-label="Прошлый месяц">‹</button><button class="icon-btn" data-cm="1" aria-label="Следующий месяц">›</button></div></div>
           <div class="cyc-grid">${grid}</div>
           <div class="legend"><span><i style="background:var(--luba)"></i>месячные</span><span><i style="box-shadow:0 0 0 1.5px var(--luba) inset"></i>прогноз</span><span><i style="background:color-mix(in srgb,var(--luba) 28%,transparent)"></i>фертильные</span><span><i style="box-shadow:0 0 0 2px var(--fg) inset"></i>овуляция</span><span><i style="background:color-mix(in srgb,var(--c-care) 32%,transparent)"></i>ПМС</span><span><i style="background:color-mix(in srgb,var(--we) 40%,transparent)"></i>безопасные</span><span><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--we) 40%,transparent) 0 3px,color-mix(in srgb,var(--luba) 28%,transparent) 3px 6px)"></i>безопасные, но рядом фертильное окно</span></div>
-          ${isLuba ? `<span class="note">Нажмите на день: первый раз — начало месячных, второй (в течение 10 дней) — конец. На отмеченный день — самочувствие и заметка.</span><button class="btn primary" data-cyc-quick>${c.open ? "Месячные закончились сегодня" : "Начались месячные сегодня"}</button>` : ""}
+          ${isLuba ? `<span class="note">Отмечайте только первый день — остальные ${c.st.plen} дней отметятся сами. Нажмите на любой день, чтобы записать самочувствие, сдвинуть начало или отметить, что закончились раньше.</span>${cyclePhase(iso(today()), c) === "period" ? "" : '<button class="btn primary" data-cyc-quick>Начались месячные сегодня</button>'}` : ""}
           <span class="note">${c.stats.fromHistory ? `Считаю по вашей истории: средний цикл ${c.avg} ${plural(c.avg, "день", "дня", "дней")} (последние ${c.stats.n} циклов были от ${c.stats.min} до ${c.stats.max} дней)` : `Считаю по циклу ${c.st.min}–${c.st.max} дней — отметьте ещё месячные, и прогноз пойдёт по вашей истории`}, месячные ${c.st.plen} ${plural(c.st.plen, "день", "дня", "дней")}${isLuba ? ' (<button class="linkbtn" data-cyc-set>изменить</button>)' : ""}. «Безопасные» — ${c.st.safe} дня после месячных, как вы просили. Календарный способ не защищает надёжно: если эти дни задевают фертильное окно, они помечены штриховкой.</span>`
           : isLuba ? `<span class="note">Отметьте начало последних месячных — приложение посчитает прогноз.</span><button class="btn primary" data-cyc-quick>Начались месячные сегодня</button>` : '<span class="note">Люба ещё не заполнила календарь.</span>'}
       </div>
