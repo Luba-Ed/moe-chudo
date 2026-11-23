@@ -637,3 +637,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* кнопка «Выполнить» справа и на телефоне, как в образце */
 @media (max-width: 480px) { .ccard { grid-template-columns: auto minmax(0, 1fr) auto; padding: 16px 12px 16px 14px; gap: 10px; } .ccard > .btn { grid-column: auto; padding: 10px 12px; font-size: 13.5px; } .ccard > .acts2 { grid-column: 1 / -1; justify-self: end; } .ccard .title { font-size: 16px; } }
+
+/* звезда «Важное» — скруглённая, как в образце */
+.star { display: grid; place-items: center; width: 26px; height: 26px; padding: 2px; font-size: 0; }
+.star svg { width: 100%; height: 100%; }
+.star.on svg path { fill: currentColor; }
+.tcard .star, .ccard .star { width: 30px; height: 30px; }

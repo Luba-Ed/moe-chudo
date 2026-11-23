@@ -478,7 +478,9 @@ async function syncLinkedEvent(t, done) {
   done ? set.add(ds) : set.delete(ds);
   await saveItem({ ...e, data: { ...e.data, done_dates: [...set] } });
 }
-const starBtn = (t) => `<button class="star${t.data.important ? " on" : ""}" data-star="${t.id}" aria-pressed="${!!t.data.important}" aria-label="${t.data.important ? "Убрать из важного" : "В важное"}" title="${t.data.important ? "Убрать из важного" : "В важное"}">${t.data.important ? "★" : "☆"}</button>`;
+// звезда со скруглёнными лучами: контур — обычная задача, залитая — «Важное»
+const STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 14.7 8.7 20.8 9.6 16.4 13.9 17.4 20 12 17.1 6.6 20 7.6 13.9 3.2 9.6 9.3 8.7Z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+const starBtn = (t) => `<button class="star${t.data.important ? " on" : ""}" data-star="${t.id}" aria-pressed="${!!t.data.important}" aria-label="${t.data.important ? "Убрать из важного" : "В важное"}" title="${t.data.important ? "Убрать из важного" : "В важное"}">${STAR_SVG}</button>`;
 async function toggleStar(id) {
   const t = tasks().find((x) => x.id === id); if (!t) return;
   if (!canEdit(t)) return toast("Эту задачу может менять только автор");
