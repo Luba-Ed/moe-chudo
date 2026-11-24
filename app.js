@@ -477,7 +477,8 @@ async function toggleDone(id) {
   if (!canEdit(t)) return toast("Эту задачу может отметить только автор");
   const done = t.data.status !== "done";
   const data = { ...t.data, status: done ? "done" : t.data.taken_by ? "accepted" : "open", done_on: done ? iso(today()) : null, done_by: done ? S.me.person : null };
-  await saveItem({ ...t, data }, done ? "Готово" : null);
+  const sph = await wheelAuto(t, data, done);
+  await saveItem({ ...t, data }, done ? (sph ? `Готово · в колесо: ${sph}` : "Готово") : null);
   await syncLinkedEvent(t, done);
 }
 // задача и событие-дубль (например, «Сходить на чистку» и «Чистка в Небольсин») отмечаются вместе
@@ -614,8 +615,8 @@ function renderSasha(main) {
       <div class="arrows"><button class="icon-btn" data-sw="-1" aria-label="Прошлая неделя">‹</button><button class="pill-btn" data-sw="0">${rangeLabel(mon)}</button><button class="icon-btn" data-sw="1" aria-label="Следующая неделя">›</button></div></div>
     ${compRow}
     <div class="grid2 sasha-grid">
-      <div class="panel"><h2>Неделя и кто отвозит</h2>${days}<span class="note">Отвозит и забирает можно поменять прямо здесь, только для этого дня. Для всех повторов откройте занятие.</span></div>
-      <div style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="panel sasha-week"><h2>Неделя и кто отвозит</h2>${days}<span class="note">Отвозит и забирает можно поменять прямо здесь, только для этого дня. Для всех повторов откройте занятие.</span></div>
+      <div class="sasha-side" style="display:flex;flex-direction:column;gap:16px;min-width:0">
         <div class="panel"><h2>Уроки · 1Б-1 <button class="btn" id="edLes">${ed ? "Сохранить" : "Править"}</button></h2>
           <div class="lessons">${[0, 1, 2, 3, 4].map((i) => `<div><h4 class="${wd(today()) === i ? "today" : ""}">${WDS[i]}</h4>${ed ? `<textarea data-les="${i}" aria-label="Уроки, ${WDL[i]}">${esc((info.lessons[i] || []).join("\n"))}</textarea>` : `<ol>${(info.lessons[i] || []).map((l) => `<li>${esc(l)}</li>`).join("")}</ol>`}</div>`).join("")}</div>
           <div class="bells">${(info.bells || []).map((b, i) => `<span>${i + 1} · ${esc(b)}</span>`).join("")}</div></div>
@@ -715,8 +716,21 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#mod
 
 const choice = (key, opts, val) => `<div class="choice" data-choice="${key}">${opts.map(([v, n, c]) => `<button type="button" class="${v === val ? "on" : ""}" data-v="${v}" style="${c ? `--c:${c}` : ""}">${c ? `<i class="dot" style="background:${c}"></i>` : ""}${n}</button>`).join("")}</div>`;
 const toggle = (key, on, title, hint) => `<div class="switch"><span>${title}${hint ? `<small>${hint}</small>` : ""}</span><button type="button" class="tog${on ? " on" : ""}" data-tog="${key}" aria-pressed="${on}" aria-label="${title}"></button></div>`;
+function timeField(label, key, val) {
+  const [h, mm] = /^\d{1,2}:\d{2}$/.test(val || "") ? val.split(":") : ["", ""];
+  const hh = h ? h.padStart(2, "0") : "";
+  const mins = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
+  if (mm && !mins.includes(mm)) mins.push(mm), mins.sort();
+  return `<div class="field tfield" data-time="${key}"><span>${label}</span><div class="tsel">
+    <select data-tp="h" aria-label="${label}: часы"><option value="">—</option>${Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((x) => `<option${x === hh ? " selected" : ""}>${x}</option>`).join("")}</select><b>:</b>
+    <select data-tp="m" aria-label="${label}: минуты">${mins.map((x) => `<option${x === (mm || "00") ? " selected" : ""}>${x}</option>`).join("")}</select></div></div>`;
+}
 function bindForm(m, F, rerender) {
   $$("[data-k]", m).forEach((el) => (el.oninput = el.onchange = () => (F[el.dataset.k] = el.value)));
+  $$("[data-time]", m).forEach((w) => {
+    const h = $('[data-tp="h"]', w), mi = $('[data-tp="m"]', w);
+    h.onchange = mi.onchange = () => (F[w.dataset.time] = h.value ? `${h.value}:${mi.value}` : "");
+  });
   $$("[data-choice]", m).forEach((g) => $$("button", g).forEach((b) => (b.onclick = () => { F[g.dataset.choice] = b.dataset.v; rerender(); })));
   $$("[data-tog]", m).forEach((b) => (b.onclick = () => { F[b.dataset.tog] = b.dataset.tog === "competition" ? !isComp(F) : !F[b.dataset.tog]; rerender(); }));
 }
@@ -748,7 +762,7 @@ function openEvent(id, ds, preset = {}) {
       ${F.who === me ? `<div class="field"><span>Кто видит</span>${choice("vis", [["private", "только мне"], ["visible", `видно ${pa === "zhenya" ? "Жене" : "Любе"}`], ["shared", "править могут оба"]], F.vis)}</div>` : ""}
       <div class="frow3"><label class="field"><span>${F.rep ? "Начиная с" : "Дата"}</span><input type="date" data-k="date" value="${F.date}"></label>
         ${F.all_day ? `<label class="field" style="grid-column:span 2"><span>По (включительно)</span><input type="date" data-k="end_date" value="${F.end_date || ""}"></label>`
-          : `<label class="field"><span>Начало</span><input type="time" data-k="start" value="${F.start || ""}"></label><label class="field"><span>Конец</span><input type="time" data-k="end" value="${F.end || ""}"></label>`}</div>
+          : `${timeField("Начало", "start", F.start)}${timeField("Конец", "end", F.end)}`}</div>
       <div class="field" style="gap:12px">${toggle("all_day", F.all_day, "Весь день", "поездка, праздник, несколько дней")}
         ${toggle("rep", F.rep, "Повторять по дням недели")}
         ${F.rep ? `<div class="days">${WDS.map((n, i) => `<button type="button" class="${F.days.includes(i) ? "on" : ""}" data-day-t="${i}">${n}</button>`).join("")}</div>

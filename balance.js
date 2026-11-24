@@ -21,6 +21,33 @@ function spherePct(owner, sphere, mon) {
 }
 const ratingItem = (owner, mon) => S.items.find((i) => i.type === "wheel" && i.data.kind === "rating" && i.data.owner === owner && i.data.week === iso(mon));
 
+// Выполненная задача сама попадает в колесо баланса того, кто её сделал:
+// сначала ищем дело колеса с похожим названием, иначе берём сферу по категории задачи.
+// Если в этой сфере ещё нет дел, создаём «Дела из задач» (5 раз в неделю — можно поменять).
+const CAT_SPHERE = { work: "Работа", serv: "Служение", care: "Дом", sasha: "Мы", self: null };
+const KIND_SPHERE = { meet: "Мы" };
+const normT = (x) => (x || "").toLowerCase().replace(/ё/g, "е").replace(/[^a-zа-я0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+async function wheelAuto(t, data, done) {
+  if (!done) { if (data.wheel_auto) { delete data.wheel; delete data.wheel_auto; } return null; }
+  if (data.wheel) { const w = wheelItems().find((i) => i.id === data.wheel); return w ? w.data.sphere : null; }
+  const owner = S.me.person, its = wheelItems(owner), words = normT(data.title);
+  let best = its.map((i) => ({ i, n: normT(i.data.title).filter((w) => words.some((x) => x.startsWith(w.slice(0, 4)) || w.startsWith(x.slice(0, 4)))).length })).filter((x) => x.n).sort((a, b) => b.n - a.n)[0]?.i;
+  const sphere = best ? best.data.sphere : CAT_SPHERE[data.cat] || KIND_SPHERE[data.kind] || null;
+  if (!sphere) return null;
+  if (!best) {
+    const mon = mondayOf(today()), inS = its.filter((i) => i.data.sphere === sphere);
+    best = inS.sort((a, b) => wheelProgress(a, mon).done / (+a.data.target || 1) - wheelProgress(b, mon).done / (+b.data.target || 1))[0];
+    if (!best) {
+      await guard(() => DB.save({ type: "wheel", vis: "shared", data: { kind: "item", title: "Дела из задач", sphere, owner, target: 5, by: owner, auto: true } }, S.me));
+      S.items = (await guard(() => DB.load(S.me))) || S.items;
+      best = wheelItems(owner).find((i) => i.data.sphere === sphere && i.data.auto);
+      if (!best) return null;
+    }
+  }
+  data.wheel = best.id; data.wheel_auto = true;
+  return sphere;
+}
+
 async function toggleEvDone(id, ds) {
   const e = events().find((x) => x.id === id); if (!e) return;
   if (!canEdit(e)) return toast("Это может отметить только автор");
@@ -168,7 +195,7 @@ function planWheel(id) {
   const F = { date: iso(today()), start: "", end: "", all_day: false };
   const draw = () => openModal(`<div class="sheet-h"><button data-close>Отмена</button><b>Запланировать: ${esc(it.data.title)}</b><button class="go" data-save>Готово</button></div>
     <div class="frow3"><label class="field"><span>Дата</span><input type="date" data-k="date" value="${F.date}"></label>
-      <label class="field"><span>Начало</span><input type="time" data-k="start" value="${F.start}"></label><label class="field"><span>Конец</span><input type="time" data-k="end" value="${F.end}"></label></div>
+      ${timeField("Начало", "start", F.start)}${timeField("Конец", "end", F.end)}</div>
     <span class="note">Дело появится в календаре и в колонке «Сегодня» этого дня с галочкой «сделано».</span>
     <div class="sheet-foot"><span></span><button class="btn primary" data-save>В календарь</button></div>`, (m) => {
     bindForm(m, F, draw);
